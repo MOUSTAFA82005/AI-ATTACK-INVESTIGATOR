@@ -2,12 +2,12 @@
 
 ## Rules
 1. Branches:
-   - `Safi` and `Elsharawy`: personal branches, each of us works only on his own.
-   - `Devlope`: integration branch where both our work comes together (not protected).
+   - `safi` and `elsharawy`: personal branches, each of us works only on his own.
+   - `devlope`: integration branch where both our work comes together (not protected).
    - `main`: stable version only (milestones, demo, final submission). Protected.
-2. When a task is done, merge your branch into `Devlope` (directly, or with a Pull Request if you want). No review required.
-3. When `Devlope` works end to end (e.g. the week 6 milestone), open a Pull Request from `Devlope` to `main`.
-4. Merge into `Devlope` often (at least once a week, ideally per task), and pull `Devlope` into your branch before starting new work, so the branches never drift far apart.
+2. When a task is done, merge your branch into `devlope` (directly, or with a Pull Request if you want). No review required.
+3. When `devlope` works end to end (e.g. the week 6 milestone), open a Pull Request from `devlope` to `main`.
+4. Merge into `devlope` often (at least once a week, ideally per task), and pull `devlope` into your branch before starting new work, so the branches never drift far apart.
 5. Never commit directly to `main`.
 6. Folder ownership (to avoid conflicts):
    - Lab and data: `lab/`, `data/`, traffic generator and label files
@@ -20,25 +20,25 @@
 ```powershell
 git clone https://github.com/MOUSTAFA82005/AI-ATTACK-INVESTIGATOR.git
 cd AI-ATTACK-INVESTIGATOR
-git checkout Safi        # or: git checkout Elsharawy
+git checkout safi        # or: git checkout elsharawy
 ```
 
 ## Daily flow
 ```powershell
-git checkout Safi
-git pull origin Devlope  # bring in your teammate's merged work
+git checkout safi
+git pull origin devlope  # bring in your teammate's merged work
 # ... work ...
 git add .
 git commit -m "Short description of the change"
 git push
 ```
-When a task is done, merge it into `Devlope`:
+When a task is done, merge it into `devlope`:
 ```powershell
-git checkout Devlope
+git checkout devlope
 git pull
-git merge Safi
+git merge safi
 git push
-git checkout Safi
+git checkout safi
 ```
 
 ## Ethics
