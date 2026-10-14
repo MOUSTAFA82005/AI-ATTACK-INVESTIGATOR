@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Attack Investigator</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: .4rem; text-align: left; }
+    #status { margin-top: .5rem; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>AI Attack Investigator</h1>
+  <form id="form">
+    <input type="file" id="file" accept=".log,.txt" required>
+    <button type="submit">Analyze</button>
+  </form>
+  <div id="status"></div>
+  <table>
+    <thead>
+      <tr><th>Time</th><th>IP</th><th>Request</th><th>Attack type</th><th>Stage</th><th>Risk</th></tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="6">No results yet.</td></tr></tbody>
+  </table>
+  <script>
+    document.getElementById("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData();
+      fd.append("file", document.getElementById("file").files[0]);
+      const res = await fetch("/analyze", { method: "POST", body: fd });
+      const data = await res.json();
+      document.getElementById("status").textContent =
+        `${data.filename}: ${data.lines} lines received.`;
+    });
+  </script>
+</body>
+</html>

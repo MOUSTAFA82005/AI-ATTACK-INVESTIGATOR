@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Data and logs (too big / generated; never commit)
+data/raw/*
+data/processed/*
+lab/logs/*
+!**/.gitkeep
+
+# Saved models
+*.joblib
+*.pkl
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
