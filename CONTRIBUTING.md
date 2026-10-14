@@ -5,7 +5,7 @@
    - `Safi` and `Elsharawy`: personal branches, each of us works only on his own.
    - `Devlope`: integration branch where both our work comes together.
    - `main`: stable version only (milestones, demo, final submission).
-2. When a task is done, open a Pull Request from your branch to `Devlope`. The other teammate reviews it and merges it.
+2. When a task is done, open a Pull Request from your branch to `Devlope` and merge it (no review required).
 3. When `Devlope` works end to end (e.g. the week 6 milestone), open a Pull Request from `Devlope` to `main`.
 4. Merge into `Devlope` often (at least once a week, ideally per task), and pull `Devlope` into your branch before starting new work, so the branches never drift far apart.
 5. Never commit directly to `main` or `Devlope`.
@@ -32,7 +32,7 @@ git add .
 git commit -m "Short description of the change"
 git push
 ```
-When a task is done, open a Pull Request from your branch to `Devlope` and ask your teammate to review.
+When a task is done, open a Pull Request from your branch to `Devlope` and merge it.
 
 ## Ethics
 All attack scripts run only against our own lab on 127.0.0.1. Never point them at any other site.
