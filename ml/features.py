@@ -152,3 +152,141 @@ if __name__ == "__main__":
                                   "sql_comment", "kw_sql", "kw_xss", "kw_traversal", "tautology")}
         print(u, "->", keep)
 
+
+
+# =====================================================================
+# Site-independent features (value_features)
+# ---------------------------------------------------------------------
+# request_features() looks at the whole request, so it also learns the
+# SHAPE of one site (path names, methods, JSON brackets). A model trained
+# on CSIC with it calls almost every normal Juice Shop request an attack.
+#
+# value_features() looks only at what the user typed: the values of URL
+# parameters, the values inside a form or JSON body, and the path itself
+# for traversal. Path names, parameter names, JSON brackets and the HTTP
+# method are ignored, because they change from site to site.
+# =====================================================================
+import json as _json
+from urllib.parse import unquote_plus as _unquote_plus
+
+_SQL_RE = [
+    r"\bunion\b[\s\S]{0,40}\bselect\b", r"\bselect\b[\s\S]{0,80}\bfrom\b",
+    r"\binsert\b\s+\binto\b", r"\bdrop\b\s+\btable\b", r"\bupdate\b\s+\w+\s+\bset\b",
+    r"\bdelete\b\s+\bfrom\b", r"['\"]\s*\b(or|and)\b", r"\b(or|and)\b\s+[\w'\"]+\s*=\s*[\w'\"]+",
+    r"\bsleep\s*\(", r"\bbenchmark\s*\(", r"\bwaitfor\b\s+\bdelay\b",
+    r"information_schema", r"\bload_file\b", r"xp_cmdshell", r"\bconcat\s*\(",
+    r"\bchar\s*\(", r"\border\s+by\s+\d", r";\s*(select|drop|insert|update|delete|shutdown)\b",
+    r"(--|#)\s*$", r"/\*.*?\*/",
+]
+_XSS_RE = [
+    r"<\s*script", r"<\s*/\s*script", r"javascript\s*:", r"\bon\w+\s*=",
+    r"<\s*(img|svg|iframe|body|object|embed|a|div|input|style|link|meta)\b",
+    r"\b(alert|prompt|confirm|eval)\s*\(", r"document\.(cookie|location|write)",
+    r"fromcharcode", r"<\s*!--#",                      # last one: SSI
+]
+_TRAV_RE = [r"\.\./", r"\.\.\\", r"/etc/(passwd|shadow|hosts)", r"boot\.ini",
+            r"win\.ini", r"/proc/self", r"c:\\windows"]
+_CMD_RE = [r"[;|&`]\s*(ls|cat|id|whoami|uname|wget|curl|nc|ping|rm|echo)\b",
+           r"\$\(", r"`[^`]+`", r"/bin/(sh|bash)", r"cmd\.exe", r"\|\|", r"&&"]
+_CRLF_RE = [r"[\r\n]", r"%0d|%0a"]
+# paths that scanners look for (backup copies, config, admin tools)
+_PROBE_EXT = (".bak", ".old", ".inc", ".orig", ".swp", ".save", ".tmp", ".java",
+              ".config", ".conf", ".ini", ".log", ".sql", ".tar", ".gz", ".zip", "~")
+_PROBE_PATHS = ["/.git", "/.env", "/.svn", "/.htaccess", "/.htpasswd", "/_vti_",
+                "/wp-admin", "/wp-login", "/phpmyadmin", "/cgi-bin", "/server-status",
+                "/web.config", "/admin.php", "/shell", "/etc/"]
+_ALL_RE = {"sql": _SQL_RE, "xss": _XSS_RE, "trav": _TRAV_RE, "cmd": _CMD_RE}
+_COMPILED = {k: [re.compile(p, re.I) for p in v] for k, v in _ALL_RE.items()}
+_V_CHARS = {"quote1": "'", "quote2": '"', "lt": "<", "gt": ">", "semicolon": ";",
+            "paren": "(", "pipe": "|", "backtick": "`", "dollar": "$",
+            "brace": "{", "backslash": "\\", "hash": "#", "star": "*", "equals": "="}
+
+
+_B64 = re.compile(r"[A-Za-z0-9+/_-]{4,}={1,2}")
+
+
+def _dec(s):
+    """Decode up to 3 times (catches double encoding like %2527)."""
+    s = str(s or "")
+    for _ in range(3):
+        d = _unquote_plus(s, encoding="latin-1")
+        if d == s:
+            break
+        s = d
+    return s
+
+
+def _json_leaves(obj, out):
+    if isinstance(obj, dict):
+        for v in obj.values():
+            _json_leaves(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _json_leaves(v, out)
+    elif isinstance(obj, str):
+        out.append(obj)
+    # numbers / bools / null are not user text: skip
+
+
+def user_values(url, body=""):
+    """Everything the user typed: URL parameter values and body values."""
+    url = str(url or "")
+    body = str(body or "")
+    query = url.split("?", 1)[1] if "?" in url else ""
+    vals = [v for _, v in parse_qsl(query, keep_blank_values=True)] if query else []
+    if "=" in query and not vals:
+        vals = [query]
+    b = body.strip()
+    if b:
+        try:
+            leaves = []
+            _json_leaves(_json.loads(b), leaves)
+            vals += leaves
+        except ValueError:
+            if "=" in b:
+                vals += [v for _, v in parse_qsl(b, keep_blank_values=True)]
+            else:
+                vals.append(b)
+    vals = [_dec(v) for v in vals if v != ""]
+    # base64 tokens end in "=" / "==": drop that padding so it doesn't look like "a=b"
+    return [v.rstrip("=") if _B64.fullmatch(v) else v for v in vals]
+
+
+def value_features(method, url, body="", user_agent=""):
+    """Site-independent numeric features for one request (see note above)."""
+    url = str(url or "")
+    path = _dec(url.split("?", 1)[0])
+    vals = user_values(url, body)
+    text = "\n".join(vals)
+    low = text.lower()
+    raw = url + " " + str(body or "")
+
+    f = {}
+    f["v_count"] = len(vals)
+    f["v_max_len"] = max((len(v) for v in vals), default=0)
+    f["v_log_total_len"] = math.log1p(len(text))
+    for name, ch in _V_CHARS.items():
+        f["v_chr_" + name] = text.count(ch)
+    f["v_sql_comment"] = text.count("--") + text.count("/*")
+    f["v_max_special_ratio"] = max(
+        (sum(not (c.isalnum() or c in " .,@_-:/") for c in v) / max(len(v), 1) for v in vals),
+        default=0.0)
+    f["v_spaces"] = text.count(" ")
+    for fam, pats in _COMPILED.items():
+        f["v_kw_" + fam] = sum(len(p.findall(low)) for p in pats)
+    f["v_tautology"] = int(bool(re.search(r"(\b\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2'", low)))
+    f["v_crlf"] = int(any(re.search(p, v, re.I) for p in _CRLF_RE for v in vals + [raw]))
+    # path: only traversal / injected markup, never the path words themselves
+    f["p_kw_trav"] = sum(len(p.findall(path.lower())) for p in _COMPILED["trav"])
+    f["p_bad_chars"] = sum(path.count(c) for c in "<>'\"`;|$")
+    f["p_kw_xss"] = sum(len(p.findall(path.lower())) for p in _COMPILED["xss"])
+    lp = path.lower().rstrip("/")
+    f["p_probe_ext"] = int(any(lp.endswith(e) or (e + "/") in lp + "/" for e in _PROBE_EXT if e != ".log"))
+    f["p_probe_path"] = int(any(x in lp for x in _PROBE_PATHS))
+    # encoding tricks anywhere in the raw request
+    f["double_encoded"] = int(bool(re.search(r"%25[0-9a-f]{2}", raw, re.I)))
+    f["null_byte"] = int("%00" in raw or "\x00" in raw)
+    f["v_kw_total"] = (f["v_kw_sql"] + f["v_kw_xss"] + f["v_kw_trav"] + f["v_kw_cmd"]
+                       + f["p_kw_trav"] + f["p_kw_xss"] + f["p_probe_ext"] + f["p_probe_path"])
+    f["scanner_agent"] = int(any(a in (user_agent or "").lower() for a in SCANNER_AGENTS))
+    return f

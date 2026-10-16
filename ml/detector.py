@@ -38,12 +38,14 @@ def to_frame(methods, paths, bodies):
     return pd.concat([pd.DataFrame({"text": text}), hand], axis=1)
 
 
-def build_pipeline(hand_cols, pos_weight=1.0, n_jobs=2):
-    features = ColumnTransformer([
-        ("tfidf", TfidfVectorizer(analyzer="char", ngram_range=(2, 4), min_df=2,
-                                  max_features=2_000, sublinear_tf=True, dtype=np.float32), "text"),
-        ("hand", StandardScaler(), hand_cols),
-    ])
+def build_pipeline(hand_cols, pos_weight=1.0, n_jobs=2, use_tfidf=True):
+    """use_tfidf=False gives the features.py-only model (less tied to one site)."""
+    parts = [("hand", StandardScaler(), hand_cols)]
+    if use_tfidf:
+        parts.insert(0, ("tfidf", TfidfVectorizer(analyzer="char", ngram_range=(2, 4), min_df=2,
+                                                  max_features=2_000, sublinear_tf=True,
+                                                  dtype=np.float32), "text"))
+    features = ColumnTransformer(parts)
     model = XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.1, tree_method="hist",
                           max_bin=32, scale_pos_weight=pos_weight, n_jobs=n_jobs,
                           random_state=42, eval_metric="logloss")
