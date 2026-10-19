@@ -172,7 +172,7 @@ class RequestLog:
 
     def log_response(self, resp, ip, label, attack_type):
         self.status_counts[resp.status_code] += 1
-        path = urllib.parse.urlsplit(resp.request.url).path
+        path = resp.request.path_url
         self.record(ip, resp.request.method, path, label, attack_type)
 
     def write(self, path):
