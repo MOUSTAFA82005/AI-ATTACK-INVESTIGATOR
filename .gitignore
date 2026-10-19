@@ -20,3 +20,5 @@ lab/logs/*
 Thumbs.db
 .vscode/
 .idea/
+
+data/labels/
