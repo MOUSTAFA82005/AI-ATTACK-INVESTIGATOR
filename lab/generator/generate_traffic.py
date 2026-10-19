@@ -34,8 +34,14 @@ if BASE != "http://127.0.0.1:8080":
 
 ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD_DIR = Path(__file__).resolve().parent / "payloads"
-SESSIONS_PATH = ROOT / "data" / "labels" / "sessions.csv"
-REQUESTS_PATH = ROOT / "data" / "labels" / "requests.csv"
+def sessions_path(tag):
+    suffix = f"_{tag}" if tag else ""
+    return ROOT / "data" / "labels" / f"sessions{suffix}.csv"
+
+
+def requests_path(tag):
+    suffix = f"_{tag}" if tag else ""
+    return ROOT / "data" / "labels" / f"requests{suffix}.csv"
 
 BROWSER_UAS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -100,6 +106,43 @@ FEEDBACK_COMMENTS = [
     "Best juice shop, hands down (and I've tried many).",
 ]
 
+# ~20% of normal search/feedback text: harmless phrases that LOOK like code
+# keywords (select, drop, union, order by, 1=1, <3, "script") but are
+# ordinary English. These test whether the model over-fires on keywords
+# alone instead of using structure (quotes, comments, special chars).
+HARD_NORMAL_PHRASES = [
+    "select your size before checkout",
+    "drop off at 5pm please",
+    "union station juice bar",
+    "I <3 this smoothie",
+    "best script ever for a recipe",
+    "order by price please",
+    "1=1 deal: buy one get one",
+    "please delete my old address",
+    "insert a note: gift wrap please",
+    "update my delivery time to 6pm",
+    "drop by the store anytime",
+    "select all that apply: fruit, veg",
+    "union of flavors, truly unique",
+    "script for a healthy smoothie below",
+    "order by size: small, medium, large",
+    "my script for success: eat well",
+    "please update the order status",
+    "where is my order? #12345",
+    "select 'large' as my cup size",
+    "insert coin for the vending machine joke",
+    "drop everything, this juice is amazing",
+    "union break room loved this brand",
+    "delete this review if duplicated",
+    "1=1 always true, 5 stars always deserved",
+    "select 2 of these for a discount",
+    "having trouble with my order",
+    "group by flavor when restocking?",
+    "order confirmed, thanks a lot",
+    "script kiddie joke aside, great app",
+    "please select a delivery slot",
+]
+
 SEARCH_TERM_RE = PRODUCT_TERMS  # alias for readability below
 
 _ip_counter = [1]
@@ -126,9 +169,52 @@ def load_payloads(name):
 SQLI_PAYLOADS = load_payloads("sqli.txt")
 XSS_PAYLOADS = load_payloads("xss.txt")
 TRAVERSAL_PAYLOADS = load_payloads("traversal.txt")
+SQLI_PAYLOADS += load_payloads("sqli_extra.txt")
+XSS_PAYLOADS += load_payloads("xss_extra.txt")
 
 
 def vary(payload):
+    """Apply a random surface variation to an attack payload."""
+    choice = random.choices(
+        ["plain", "url_encode", "mixed_case", "spaces", "obfuscate"],
+        weights=[20, 20, 20, 10, 30],
+    )[0]
+    if choice == "url_encode":
+        return urllib.parse.quote(payload, safe="")
+    if choice == "mixed_case":
+        return "".join(c.upper() if random.random() < 0.5 else c.lower() for c in payload)
+    if choice == "spaces":
+        return "  " + payload + "  "
+    if choice == "obfuscate":
+        return _obfuscate(payload)
+    return payload
+
+
+# Keywords we split with an inline SQL comment, e.g. "UNION" -> "UN/**/ION".
+_SPLITTABLE_WORDS = ["union", "select", "insert", "update", "delete", "drop",
+                      "where", "order", "having", "script", "alert", "onerror"]
+_ALT_WHITESPACE = ["\t", "%09", "\n", "%0a", "/**/"]
+
+
+def _obfuscate(payload):
+    """Mangle a payload: split keywords with SQL comments, swap whitespace
+    for alternative forms, and concatenate pieces of the string."""
+    text = payload
+    # 1) split one matched keyword with an inline comment (SQLi-style evasion)
+    for word in random.sample(_SPLITTABLE_WORDS, k=len(_SPLITTABLE_WORDS)):
+        idx = text.lower().find(word)
+        if idx != -1:
+            mid = len(word) // 2
+            text = text[:idx] + word[:mid] + "/**/" + word[mid:] + text[idx + len(word):]
+            break
+    # 2) swap plain spaces for an alternative whitespace form
+    alt_ws = random.choice(_ALT_WHITESPACE)
+    text = text.replace(" ", alt_ws)
+    # 3) occasionally wrap as a string concatenation (SQL-style)
+    if random.random() < 0.4 and "'" not in text:
+        parts = [text[:len(text) // 2], text[len(text) // 2:]]
+        text = "'" + parts[0] + "'+'" + parts[1] + "'"
+    return text
     """Apply a random surface variation: URL-encode, mixed case, extra spaces."""
     choice = random.choice(["plain", "url_encode", "mixed_case", "spaces"])
     if choice == "url_encode":
@@ -206,7 +292,9 @@ def run_normal_session(ip, reqlog):
         send(reqlog, s, ip, "GET", BASE + f, *L)
         pause()
 
-    for term in random.sample(PRODUCT_TERMS, k=random.randint(1, 3)):
+        for term in random.sample(PRODUCT_TERMS, k=random.randint(1, 3)):
+            if random.random() < 0.2:
+                term = random.choice(HARD_NORMAL_PHRASES)
         send(reqlog, s, ip, "GET", BASE + "/rest/products/search", *L, params={"q": term})
         pause()
         pid = random.randint(1, 20)
@@ -238,11 +326,12 @@ def run_normal_session(ip, reqlog):
     if bid is not None:
         send(reqlog, s, ip, "GET", BASE + f"/rest/basket/{bid}", *L)
         pause()
-    send(reqlog, s, ip, "POST", BASE + "/api/BasketItems/", *L,
+        send(reqlog, s, ip, "POST", BASE + "/api/BasketItems/", *L,
          json={"ProductId": random.randint(1, 20), "quantity": random.randint(1, 3)})
     pause()
+    comment = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(FEEDBACK_COMMENTS)
     send(reqlog, s, ip, "POST", BASE + "/api/Feedbacks/", *L,
-         json={"comment": random.choice(FEEDBACK_COMMENTS), "rating": random.randint(3, 5)})
+         json={"comment": comment, "rating": random.randint(3, 5)})
 
     return start, now_iso()
 
@@ -276,8 +365,9 @@ def send_payload_everywhere(reqlog, s, ip, attack_type, payload):
 def run_sqli_session(ip, reqlog):
     s = session_http(ip, ATTACK_UAS["sqli"])
     start = now_iso()
+    cover_term = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(PRODUCT_TERMS)
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
-         params={"q": random.choice(PRODUCT_TERMS)})  # cover request
+         params={"q": cover_term})  # cover request
     pause()
     for payload in random.sample(SQLI_PAYLOADS, k=random.randint(4, 8)):
         send_payload_everywhere(reqlog, s, ip, "sqli", payload)
@@ -288,8 +378,9 @@ def run_sqli_session(ip, reqlog):
 def run_xss_session(ip, reqlog):
     s = session_http(ip, random.choice(BROWSER_UAS))  # looks like a normal browser
     start = now_iso()
+    cover_term = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(PRODUCT_TERMS)
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
-         params={"q": random.choice(PRODUCT_TERMS)})
+         params={"q": cover_term})
     pause()
     for payload in random.sample(XSS_PAYLOADS, k=random.randint(4, 8)):
         send_payload_everywhere(reqlog, s, ip, "xss", payload)
@@ -334,11 +425,15 @@ def main():
     ap = argparse.ArgumentParser(description="Generate labelled traffic for the lab.")
     ap.add_argument("--sessions", type=int, default=300)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out-tag", type=str, default="",
+                     help="Suffix for output files, e.g. 'run2' -> requests_run2.csv")
     args = ap.parse_args()
 
     random.seed(args.seed)
     reqlog = RequestLog()
     session_rows = []
+    sessions_out = sessions_path(args.out_tag)
+    requests_out = requests_path(args.out_tag)
 
     n_attack = int(args.sessions * 0.30)
     n_normal = args.sessions - n_attack
@@ -356,15 +451,15 @@ def main():
         if i % 20 == 0:
             print(f"{i}/{len(plan)} sessions done")
 
-    SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(SESSIONS_PATH, "w", newline="", encoding="utf-8") as f:
+        sessions_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(sessions_out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["ip", "label", "attack_type", "start_time", "end_time"])
         w.writerows(session_rows)
-    reqlog.write(REQUESTS_PATH)
+    reqlog.write(requests_out)
 
-    print(f"\nDone: {len(session_rows)} sessions -> {SESSIONS_PATH}")
-    print(f"      {len(reqlog.rows)} requests -> {REQUESTS_PATH}")
+    print(f"\nDone: {len(session_rows)} sessions -> {sessions_out}")
+    print(f"      {len(reqlog.rows)} requests -> {requests_out}")
     print("\nStatus code counts:")
     for code, count in sorted(reqlog.status_counts.items(), key=lambda x: str(x[0])):
         print(f"  {code}: {count}")
