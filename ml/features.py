@@ -186,7 +186,8 @@ _XSS_RE = [
 ]
 _TRAV_RE = [r"\.\./", r"\.\.\\", r"/etc/(passwd|shadow|hosts)", r"boot\.ini",
             r"win\.ini", r"/proc/self", r"c:\\windows"]
-_CMD_RE = [r"[;|&`]\s*(ls|cat|id|whoami|uname|wget|curl|nc|ping|rm|echo)\b",
+_CMD_RE = [r"[;|&`\n]\s*(ls|cat|id|whoami|uname|wget|curl|nc|ping|rm|echo|ifconfig|ipconfig|"
+           r"netstat|nslookup|hostname|systeminfo|sleep\s+\d+)\b",
            r"\$\(", r"`[^`]+`", r"/bin/(sh|bash)", r"cmd\.exe", r"\|\|", r"&&"]
 _CRLF_RE = [r"[\r\n]", r"%0d|%0a"]
 # paths that scanners look for (backup copies, config, admin tools)
@@ -197,10 +198,6 @@ _PROBE_PATHS = ["/.git", "/.env", "/.svn", "/.htaccess", "/.htpasswd", "/_vti_",
                 "/web.config", "/admin.php", "/shell", "/etc/"]
 _ALL_RE = {"sql": _SQL_RE, "xss": _XSS_RE, "trav": _TRAV_RE, "cmd": _CMD_RE}
 _COMPILED = {k: [re.compile(p, re.I) for p in v] for k, v in _ALL_RE.items()}
-_V_CHARS = {"quote1": "'", "quote2": '"', "lt": "<", "gt": ">", "semicolon": ";",
-            "paren": "(", "pipe": "|", "backtick": "`", "dollar": "$",
-            "brace": "{", "backslash": "\\", "hash": "#", "star": "*", "equals": "="}
-
 
 _B64 = re.compile(r"[A-Za-z0-9+/_-]{4,}={1,2}")
 
@@ -252,6 +249,16 @@ def user_values(url, body=""):
     return [v.rstrip("=") if _B64.fullmatch(v) else v for v in vals]
 
 
+# A quote next to SQL syntax ("' or 1=1", "')--", "admin'#"), not one in prose ("O'Brien").
+_CTX_QUOTE = [re.compile(p) for p in (
+    r"['\"]\s*(\)|;|--|#|/\*|=|\+|\|\||\b(or|and|xor|union|select|order|group|having|like)\b)",
+    r"(=|\(|,)\s*['\"]",
+)]
+_PROSE_PUNCT = ".,@_-:/'!?;()%&$#=+\"*"
+_TAUTOLOGY = re.compile(r"(?:\b(?:or|and|xor|where|having)\b|['\")]|\|\||&&)\s*"
+                        r"\(*\s*(?:(\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2)")
+
+
 def value_features(method, url, body="", user_agent=""):
     """Site-independent numeric features for one request (see note above)."""
     url = str(url or "")
@@ -265,16 +272,23 @@ def value_features(method, url, body="", user_agent=""):
     f["v_count"] = len(vals)
     f["v_max_len"] = max((len(v) for v in vals), default=0)
     f["v_log_total_len"] = math.log1p(len(text))
-    for name, ch in _V_CHARS.items():
-        f["v_chr_" + name] = text.count(ch)
+    # Special characters count only where they act like code: a single
+    # apostrophe or ";" is normal in human text ("Can't wait; thanks!").
+    f["v_ctx_quote"] = sum(len(p.findall(low)) for p in _CTX_QUOTE)
+    f["v_ctx_tag"] = len(re.findall(r"<\s*[a-z!/?]", low))
+    f["v_ctx_attr_break"] = len(re.findall(r"['\"]\s*>", low))
+    f["v_ctx_call"] = len(re.findall(r"[a-z_]\(", low))
+    f["v_ctx_shell"] = len(re.findall(r"`|\$\(|\$\{|\|", text))
+    f["v_chr_backslash"] = text.count("\\")
+    f["v_chr_brace"] = text.count("{") + text.count("}")
     f["v_sql_comment"] = text.count("--") + text.count("/*")
     f["v_max_special_ratio"] = max(
-        (sum(not (c.isalnum() or c in " .,@_-:/") for c in v) / max(len(v), 1) for v in vals),
-        default=0.0)
-    f["v_spaces"] = text.count(" ")
+        (sum(not (c.isalnum() or c.isspace() or c in _PROSE_PUNCT) for c in v) / max(len(v), 1)
+         for v in vals), default=0.0)
     for fam, pats in _COMPILED.items():
         f["v_kw_" + fam] = sum(len(p.findall(low)) for p in pats)
-    f["v_tautology"] = int(bool(re.search(r"(\b\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2'", low)))
+    # "1=1" counts only right after SQL syntax ("' OR 1=1", "where 1=1"), not in prose ("1=1 deal")
+    f["v_tautology"] = int(bool(_TAUTOLOGY.search(low)))
     f["v_crlf"] = int(any(re.search(p, v, re.I) for p in _CRLF_RE for v in vals + [raw]))
     # path: only traversal / injected markup, never the path words themselves
     f["p_kw_trav"] = sum(len(p.findall(path.lower())) for p in _COMPILED["trav"])

@@ -21,3 +21,5 @@ data/labels/*
 Thumbs.db
 .vscode/
 .idea/
+
+data/labels/

@@ -10,3 +10,5 @@ python-multipart
 requests
 matplotlib
 jupyter
+httpx
+pytest
