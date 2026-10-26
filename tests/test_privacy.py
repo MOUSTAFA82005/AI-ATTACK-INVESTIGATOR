@@ -53,6 +53,18 @@ def test_exact_match_only():
     assert mask_secrets("passport=AB123") == "passport=AB123"
 
 
+def test_secret_name_variants_are_masked():
+    for name in ["newPassword", "passwordRepeat", "confirm_password", "access_token", "cardNumber"]:
+        assert mask_secrets(f"{name}=x") == f"{name}=***"
+        assert json.loads(mask_secrets(json.dumps({name: "x"})))[name] == "***"
+        assert mask_path(f"/register?{name}=x") == f"/register?{name}=***"
+
+
+def test_short_names_stay_exact():
+    for name in ["passport", "compass", "cardigan"]:
+        assert mask_secrets(f"{name}=x") == f"{name}=x"
+        assert json.loads(mask_secrets(json.dumps({name: "x"})))[name] == "x"
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:
