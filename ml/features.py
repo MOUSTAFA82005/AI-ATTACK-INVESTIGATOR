@@ -186,7 +186,8 @@ _XSS_RE = [
 ]
 _TRAV_RE = [r"\.\./", r"\.\.\\", r"/etc/(passwd|shadow|hosts)", r"boot\.ini",
             r"win\.ini", r"/proc/self", r"c:\\windows"]
-_CMD_RE = [r"[;|&`]\s*(ls|cat|id|whoami|uname|wget|curl|nc|ping|rm|echo)\b",
+_CMD_RE = [r"[;|&`\n]\s*(ls|cat|id|whoami|uname|wget|curl|nc|ping|rm|echo|ifconfig|ipconfig|"
+           r"netstat|nslookup|hostname|systeminfo|sleep\s+\d+)\b",
            r"\$\(", r"`[^`]+`", r"/bin/(sh|bash)", r"cmd\.exe", r"\|\|", r"&&"]
 _CRLF_RE = [r"[\r\n]", r"%0d|%0a"]
 # paths that scanners look for (backup copies, config, admin tools)
@@ -255,7 +256,7 @@ _CTX_QUOTE = [re.compile(p) for p in (
 )]
 _PROSE_PUNCT = ".,@_-:/'!?;()%&$#=+\"*"
 _TAUTOLOGY = re.compile(r"(?:\b(?:or|and|xor|where|having)\b|['\")]|\|\||&&)\s*"
-                        r"(?:(\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2)")
+                        r"\(*\s*(?:(\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2)")
 
 
 def value_features(method, url, body="", user_agent=""):
