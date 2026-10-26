@@ -56,14 +56,19 @@ ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD_DIR = Path(__file__).resolve().parent / "payloads"
 
 
-def sessions_path(tag):
-    suffix = f"_{tag}" if tag else ""
-    return ROOT / "data" / "labels" / f"sessions{suffix}.csv"
+def _label_path(kind, tag, site):
+    # Juice Shop keeps the old names (requests_run3.csv); other sites add their name
+    # (requests_dvwa_run4.csv), so two sites with the same --out-tag never overwrite each other.
+    parts = [kind] + ([site] if site != "juiceshop" else []) + ([tag] if tag else [])
+    return ROOT / "data" / "labels" / ("_".join(parts) + ".csv")
 
 
-def requests_path(tag):
-    suffix = f"_{tag}" if tag else ""
-    return ROOT / "data" / "labels" / f"requests{suffix}.csv"
+def sessions_path(tag, site="juiceshop"):
+    return _label_path("sessions", tag, site)
+
+
+def requests_path(tag, site="juiceshop"):
+    return _label_path("requests", tag, site)
 
 
 def generated_log_path(site, tag):
@@ -852,6 +857,11 @@ def main():
                      help="Concurrent sessions, to keep a full run fast. "
                           "Lower this if the lab becomes unstable under load.")
     args = ap.parse_args()
+    if args.site == "dvwa" and args.workers != 1:
+        # DVWA loses logged-in sessions when sessions run in parallel: most pages
+        # then redirect (302) to the login page. One worker fixes it (dvwa_check run).
+        print(f"dvwa: using 1 worker instead of {args.workers}")
+        args.workers = 1
 
     if args.log_path is None:
         args.log_path = ("lab/logs/access.log" if args.site == "juiceshop"
@@ -861,8 +871,8 @@ def main():
     reqlog = RequestLog()
     session_rows = []
     session_rows_lock = threading.Lock()
-    sessions_out = sessions_path(args.out_tag)
-    requests_out = requests_path(args.out_tag)
+    sessions_out = sessions_path(args.out_tag, args.site)
+    requests_out = requests_path(args.out_tag, args.site)
 
     log_path = Path(args.log_path)
     if not log_path.is_absolute():
