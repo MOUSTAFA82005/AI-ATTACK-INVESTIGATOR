@@ -55,5 +55,6 @@ Open http://127.0.0.1:8000 and upload a log file.
 
 - Mostafa Safi Mostafa Soliman
 - Mostafa El-Hassanein El-Hassanein El-Shaarawy
+- Mariam Mohamed Mansour
 
 Instructor: Dr. Sara El-Metwally · TA: Eng. Asmaa Nagib
