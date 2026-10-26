@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
 from ml.detector import MODEL_PATH, to_frame  # noqa: E402
-from ml.sessions import analyze_sessions  # noqa: E402
+from ml.sessions import LOGIN_PATH, _resource, analyze_sessions  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 
@@ -119,6 +119,24 @@ def _clean(value):
     return value
 
 
+def _behaviour_of(r, session):
+    """Which of the session's behaviours this (original, unmasked) request belongs to.
+
+    Same rules ml/sessions.py uses to mark requests: a login POST is brute force, a
+    request for the enumerated resource is enumeration, anything else is the scan.
+    """
+    behaviours = session["behaviours"]
+    path = str(r["path"] or "")
+    if ("bruteforce" in behaviours and str(r["method"]).upper() == "POST"
+            and LOGIN_PATH.search(path.split("?", 1)[0])):
+        return "bruteforce"
+    if "enumeration" in behaviours and _resource(path) == session["enumerated_resource"]:
+        return "enumeration"
+    if "scan" in behaviours:
+        return "scan"
+    return behaviours[0]
+
+
 _REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "body", "attack_prob", "label"]
 
 @app.post("/investigate")
@@ -172,7 +190,7 @@ async def investigate(file: UploadFile = File(...)):
                 if r["label"] == "attack":
                     attack_type = r["attack_type"]
                 elif r["session_attack"] == 1 and behaviours:
-                    attack_type = behaviours[0]          # part of a behaviour, not a single-request attack
+                    attack_type = _behaviour_of(r, s)    # part of a behaviour, not a single-request attack
                 else:
                     attack_type = None
                 timeline.append({

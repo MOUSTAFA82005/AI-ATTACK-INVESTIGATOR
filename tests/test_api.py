@@ -324,3 +324,18 @@ def test_investigate_behaviour_used_for_session_only_attacks(client, type_calls)
     assert all(t["attack_type"] == "bruteforce" for t in brute["timeline"])
     assert brute["attack_types"] == ["bruteforce"]
     assert type_calls == []                                      # no attack rows, so no call at all
+
+
+def test_investigate_behaviour_chosen_per_request(client, type_calls):
+    # One IP, one session: 4 failed logins AND 3 hidden-file probes (404).
+    probes = "".join(
+        f'10.0.0.40 - - [16/Oct/2026:18:01:{i:02d} +0000] "GET {p} HTTP/1.1" 404 10 "-" "Mozilla/5.0"\n'
+        for i, p in enumerate(["/.env", "/.git/config", "/backup.bak"])
+    )
+    log = "".join(login_line("10.0.0.40", sec, f"pw-{sec}") for sec in range(4)) + probes
+    s = session_of(post_investigate(client, log).json(), "10.0.0.40")
+    assert set(s["behaviours"]) >= {"bruteforce", "scan"}
+    types = {t["path"]: t["attack_type"] for t in s["timeline"]}
+    assert types["/rest/user/login"] == "bruteforce"
+    assert types["/.env"] == types["/.git/config"] == types["/backup.bak"] == "scan"
+    assert set(s["attack_types"]) == {"bruteforce", "scan"}
