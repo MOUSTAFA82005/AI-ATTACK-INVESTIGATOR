@@ -4,16 +4,18 @@ from urllib.parse import unquote_plus
 
 MASK = "***"
 
-# Field names treated as secret. Compared in lowercase, exact match.
-SECRET_NAMES = {
-    "password", "passwd", "pwd", "pass", "secret", "token",
-    "apikey", "api_key", "card", "cardnumber", "cvv", "cvc",
-}
+# A field is secret when its lowercase name CONTAINS one of these.
+SECRET_CONTAINS = (
+    "password", "passwd", "pwd", "secret", "token",
+    "apikey", "api_key", "cardnumber", "cvv", "cvc",
+)
+# Short names that must match EXACTLY, so "passport", "compass", "cardigan" stay visible.
+SECRET_EXACT = {"pass", "card"}
 
 
 def _is_secret(name):
-    return unquote_plus(str(name)).strip().lower() in SECRET_NAMES
-
+    n = unquote_plus(str(name)).strip().lower()
+    return n in SECRET_EXACT or any(s in n for s in SECRET_CONTAINS)
 
 def _mask_json(value):
     """Walk a parsed JSON value at any depth and mask secret fields."""
