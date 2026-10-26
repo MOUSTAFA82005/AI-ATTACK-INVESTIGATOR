@@ -1,13 +1,14 @@
 """
 generate_traffic.py - traffic generator for the AI Attack Investigator lab.
 
-LAB ONLY. Targets http://127.0.0.1:8080 (our own isolated Juice Shop/Nginx
-in Docker) and nothing else. This script refuses to run against any other
-host. Never remove or change this check.
+LAB ONLY. Targets our own isolated lab sites and nothing else:
+  juiceshop -> http://127.0.0.1:8080
+  dvwa      -> http://127.0.0.1:8081
+This script refuses to run if these addresses are changed.
 
 Each simulated session gets its own fake IP (10.1.x.y, to never clash with
 manual_examples.py's 10.0.0.x) sent via X-Forwarded-For, so Nginx logs a
-distinct client IP per session (see lab/nginx/nginx.conf).
+distinct client IP per session.
 
 Sessions run CONCURRENTLY (see --workers) so a full run stays fast enough
 to run live. This means request timestamps across different sessions
@@ -18,18 +19,18 @@ Outputs (all under data/, which is gitignored - never commit generated
 data or logs):
   data/labels/sessions_<tag>.csv      - one row per session
   data/labels/requests_<tag>.csv      - one row per HTTP request actually sent
-  data/raw/juiceshop_generated_<tag>.log - the NEW access.log lines produced
-                                            by this run (captured by size,
-                                            not by content, so run this
-                                            against a log that isn't being
-                                            written to by anything else)
+                                         (now includes a "site" column)
+  data/raw/<site>_generated_<tag>.log - the NEW access.log lines produced
+                                         by this run (captured by size)
 
 Usage:
     python lab/generator/generate_traffic.py --sessions 300 --seed 3 --out-tag run3
+    python lab/generator/generate_traffic.py --site dvwa --sessions 50 --seed 99 --out-tag dvwa_check
 """
 import argparse
 import csv
 import random
+import re
 import string
 import threading
 import time
@@ -41,9 +42,15 @@ from pathlib import Path
 
 import requests
 
-BASE = "http://127.0.0.1:8080"
-if BASE != "http://127.0.0.1:8080":
-    raise SystemExit("Refusing to run: BASE must stay the lab address.")
+# ---------- lab sites (hard-coded, never change these) ----------
+ALLOWED_BASES = {
+    "juiceshop": "http://127.0.0.1:8080",
+    "dvwa": "http://127.0.0.1:8081",
+}
+BASE_SITES = dict(ALLOWED_BASES)
+if BASE_SITES != ALLOWED_BASES:
+    raise SystemExit("Refusing to run: BASE_SITES must stay the lab addresses.")
+BASE = BASE_SITES["juiceshop"]  # kept for the existing Juice Shop functions, unchanged
 
 ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD_DIR = Path(__file__).resolve().parent / "payloads"
@@ -59,9 +66,9 @@ def requests_path(tag):
     return ROOT / "data" / "labels" / f"requests{suffix}.csv"
 
 
-def generated_log_path(tag):
+def generated_log_path(site, tag):
     suffix = f"_{tag}" if tag else ""
-    return ROOT / "data" / "raw" / f"juiceshop_generated{suffix}.log"
+    return ROOT / "data" / "raw" / f"{site}_generated{suffix}.log"
 
 
 BROWSER_UAS = [
@@ -127,10 +134,6 @@ FEEDBACK_COMMENTS = [
     "Staff's friendly & quick to help.",
     "Best juice shop, hands down (and I've tried many).",
 ]
-# ~20% of normal search/feedback text: harmless phrases that LOOK like code
-# keywords (select, drop, union, order by, 1=1, <3, "script") but are
-# ordinary English. These test whether the model over-fires on keywords
-# alone instead of using structure (quotes, comments, special chars).
 HARD_NORMAL_PHRASES = [
     "select your size before checkout",
     "drop off at 5pm please",
@@ -162,6 +165,15 @@ HARD_NORMAL_PHRASES = [
     "order confirmed, thanks a lot",
     "script kiddie joke aside, great app",
     "please select a delivery slot",
+]
+# Real-looking names with punctuation (apostrophes, hyphens), used as
+# innocent input on DVWA's vulnerability pages. These are the hardest
+# "normal" cases: they look odd to a naive keyword filter but are
+# ordinary human names.
+HARD_NORMAL_NAMES = [
+    "O'Brien", "Anne-Marie", "Jean-Luc", "D'Angelo", "Mary-Jane",
+    "Al-Amin", "Ng'ang'a", "O'Connor", "Van Der Berg", "St. Clair",
+    "Mc'Donald", "L'Hommedieu", "De La Cruz", "Al-Rashid", "O'Malley",
 ]
 
 _ip_counter = [1]
@@ -212,7 +224,6 @@ def vary(payload):
     return payload
 
 
-# Keywords we split with an inline SQL comment, e.g. "UNION" -> "UN/**/ION".
 _SPLITTABLE_WORDS = ["union", "select", "insert", "update", "delete", "drop",
                       "where", "order", "having", "script", "alert", "onerror"]
 _ALT_WHITESPACE = ["\t", "%09", "\n", "%0a", "/**/"]
@@ -273,20 +284,20 @@ class RequestLog:
     def __init__(self):
         self.rows = []
         self.status_counts = Counter()
-        self.attack_counts = Counter()  # (attack_type, variant) -> count
+        self.attack_counts = Counter()  # (attack_type, variant, site) -> count
         self._lock = threading.Lock()
 
-    def record(self, ip, method, path, label, attack_type, variant=""):
+    def record(self, ip, method, path, label, attack_type, variant, site):
         with self._lock:
-            self.rows.append([now_iso(), ip, method, path, label, attack_type, variant])
+            self.rows.append([now_iso(), ip, method, path, label, attack_type, variant, site])
             if label == "attack":
-                self.attack_counts[(attack_type, variant)] += 1
+                self.attack_counts[(attack_type, variant, site)] += 1
 
-    def log_response(self, resp, ip, label, attack_type, variant=""):
+    def log_response(self, resp, ip, label, attack_type, variant, site):
         with self._lock:
             self.status_counts[resp.status_code] += 1
         path = urllib.parse.urlsplit(resp.request.url).path
-        self.record(ip, resp.request.method, path, label, attack_type, variant)
+        self.record(ip, resp.request.method, path, label, attack_type, variant, site)
 
     def log_error(self):
         with self._lock:
@@ -296,28 +307,33 @@ class RequestLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["time", "ip", "method", "path", "label", "attack_type", "variant"])
+            w.writerow(["time", "ip", "method", "path", "label", "attack_type", "variant", "site"])
             w.writerows(self.rows)
 
 
-def send(reqlog, s, ip, method, url, label, attack_type, variant="", **kwargs):
-    """Send one request and log it, regardless of outcome. Retries once on
-    connection errors, since the lab container can briefly restart."""
+def send(reqlog, s, ip, method, url, label, attack_type, variant="", site="juiceshop", **kwargs):
+    """... Redirects are NOT followed automatically: each hop must be its
+    own send() call, so every request we make maps to exactly one log
+    line and is labelled with its own real method/path (e.g. the login
+    POST itself, not the page it redirects to)."""
+    kwargs.setdefault("allow_redirects", False)
     for attempt in (1, 2):
         try:
             resp = s.request(method, url, timeout=5, **kwargs)
-            reqlog.log_response(resp, ip, label, attack_type, variant)
+            reqlog.log_response(resp, ip, label, attack_type, variant, site)
             return resp
         except requests.RequestException as e:
             if attempt == 2:
                 print(f"  request failed: {method} {url} -> {e}")
                 reqlog.log_error()
                 return None
-            time.sleep(2)  # give the container a moment to come back
+            time.sleep(2)
     return None
 
 
-# ---------- normal session ----------
+# ============================================================
+# Juice Shop sessions (unchanged from before)
+# ============================================================
 def run_normal_session(ip, reqlog):
     s = session_http(ip)
     start = now_iso()
@@ -328,7 +344,6 @@ def run_normal_session(ip, reqlog):
         send(reqlog, s, ip, "GET", BASE + f, *L)
         pause()
 
-    # occasionally a real browser 404s on something (bad bookmark, old link)
     if random.random() < 0.15:
         send(reqlog, s, ip, "GET", BASE + f"/api/Products/{random.randint(9000, 9999)}", *L)
         pause()
@@ -351,7 +366,6 @@ def run_normal_session(ip, reqlog):
     })
     pause()
 
-    # a real person sometimes mistypes their own (correct) password once or twice
     if random.random() < 0.15:
         for _ in range(random.randint(1, 2)):
             send(reqlog, s, ip, "POST", BASE + "/rest/user/login", *L,
@@ -385,7 +399,6 @@ def run_normal_session(ip, reqlog):
     return start, now_iso()
 
 
-# ---------- attack sessions ----------
 def send_payload_everywhere(reqlog, s, ip, attack_type, payload):
     p = vary(payload)
     target = random.choice(["search", "login_email", "register_email",
@@ -414,7 +427,7 @@ def run_sqli_session(ip, reqlog):
     start = now_iso()
     cover_term = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(PRODUCT_TERMS)
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
-         params={"q": cover_term})  # cover request
+         params={"q": cover_term})
     pause()
     for payload in random.sample(SQLI_PAYLOADS, k=random.randint(4, 8)):
         send_payload_everywhere(reqlog, s, ip, "sqli", payload)
@@ -423,7 +436,7 @@ def run_sqli_session(ip, reqlog):
 
 
 def run_xss_session(ip, reqlog):
-    s = session_http(ip, random.choice(BROWSER_UAS))  # looks like a normal browser
+    s = session_http(ip, random.choice(BROWSER_UAS))
     start = now_iso()
     cover_term = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(PRODUCT_TERMS)
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
@@ -442,15 +455,11 @@ def run_traversal_session(ip, reqlog):
         send(reqlog, s, ip, "GET", BASE + "/ftp/" + payload, "attack", "traversal")
         pause()
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
-         params={"q": random.choice(PRODUCT_TERMS)})  # cover request
+         params={"q": random.choice(PRODUCT_TERMS)})
     return start, now_iso()
 
 
 def run_cmdi_session(ip, reqlog):
-    """Command injection: same delivery style as sqli/xss (search query and
-    feedback comment), with the same vary() surface variations. Whether
-    Juice Shop is actually vulnerable doesn't matter here - we only need
-    these requests to exist in the log."""
     s = session_http(ip, random.choice(BROWSER_UAS))
     start = now_iso()
     cover_term = random.choice(HARD_NORMAL_PHRASES) if random.random() < 0.2 else random.choice(PRODUCT_TERMS)
@@ -471,18 +480,12 @@ def run_cmdi_session(ip, reqlog):
 
 
 def run_bruteforce_session(ip, reqlog):
-    """Three variants:
-      fast  - one account, many attempts quickly (original behaviour).
-      slow  - one account, attempts spaced 5-20s apart (evades rate limits).
-      spray - one or two passwords tried across many fake accounts.
-    Passwords are randomly generated per session (not one fixed guess)."""
     variant = random.choices(["fast", "slow", "spray"], weights=[50, 25, 25])[0]
     s = session_http(ip, ATTACK_UAS["bruteforce"])
     start = now_iso()
 
     if variant in ("fast", "slow"):
-        target_email = "admin@juice-sh.op"  # well-known default account, lab only
-        # slow attempts are capped lower so one session can't eat the time budget
+        target_email = "admin@juice-sh.op"
         n_attempts = random.randint(6, 12) if variant == "fast" else random.randint(3, 5)
         for _ in range(n_attempts):
             send(reqlog, s, ip, "POST", BASE + "/rest/user/login", "attack", "bruteforce",
@@ -494,7 +497,7 @@ def run_bruteforce_session(ip, reqlog):
         if random.random() < 0.5:
             send(reqlog, s, ip, "POST", BASE + "/rest/user/login", "attack", "bruteforce",
                  variant, json={"email": target_email, "password": fake_password()})
-    else:  # spray
+    else:
         victims = [fake_email() for _ in range(random.randint(8, 15))]
         passwords = [fake_password() for _ in range(random.randint(1, 2))]
         for victim in victims:
@@ -506,8 +509,6 @@ def run_bruteforce_session(ip, reqlog):
 
 
 def run_scan_session(ip, reqlog):
-    """Many requests to paths that mostly don't exist (404), from a small
-    open-source content wordlist."""
     s = session_http(ip, ATTACK_UAS["scan"])
     start = now_iso()
     paths = random.sample(SCAN_PATHS, k=min(len(SCAN_PATHS), random.randint(15, 25)))
@@ -518,8 +519,6 @@ def run_scan_session(ip, reqlog):
 
 
 def run_enum_session(ip, reqlog):
-    """A logged-in session that walks through many IDs on the same API
-    resource in a row (sequential or random)."""
     s = session_http(ip, random.choice(BROWSER_UAS))
     start = now_iso()
     email, password = fake_email(), fake_password()
@@ -563,6 +562,260 @@ ATTACK_RUNNERS = {
 }
 
 
+# ============================================================
+# DVWA sessions (new)
+# ============================================================
+DVWA_ACCOUNTS = [
+    ("admin", "password"),
+    ("gordonb", "abc123"),
+    ("1337", "charley"),
+    ("pablo", "letmein"),
+    ("smithy", "password"),
+]
+CSRF_RE = re.compile(r"name=['\"]user_token['\"]\s+value=['\"]([a-f0-9]+)['\"]")
+
+DVWA_STATIC_PAGES = ["/index.php", "/about.php", "/instructions.php", "/security.php"]
+DVWA_VULN_PAGES = {
+    "sqli": ("/vulnerabilities/sqli/", "id"),
+    "xss": ("/vulnerabilities/xss_r/", "name"),
+    "traversal": ("/vulnerabilities/fi/", "page"),
+}
+
+
+def get_csrf_token(html):
+    if not html:
+        return None
+    m = CSRF_RE.search(html)
+    return m.group(1) if m else None
+
+
+def dvwa_login_session(reqlog, ip, s):
+    """GET the login page to read the CSRF token, then POST credentials
+    for a randomly chosen DVWA account (one of the 5 built-in fake
+    accounts). A real person sometimes mistypes their own password once
+    or twice first."""
+    base = BASE_SITES["dvwa"]
+    username, password = random.choice(DVWA_ACCOUNTS)
+
+    r = send(reqlog, s, ip, "GET", base + "/login.php", "normal", "", site="dvwa")
+    token = get_csrf_token(r.text) if r is not None else None
+
+    if random.random() < 0.15:
+        for _ in range(random.randint(1, 2)):
+            send(reqlog, s, ip, "POST", base + "/login.php", "normal", "", site="dvwa",
+                 data={"username": username, "password": password + "x",
+                       "Login": "Login", "user_token": token or ""})
+            pause()
+            r2 = send(reqlog, s, ip, "GET", base + "/login.php", "normal", "", site="dvwa")
+            token = get_csrf_token(r2.text) if r2 is not None else token
+
+    send(reqlog, s, ip, "POST", base + "/login.php", "normal", "", site="dvwa",
+         data={"username": username, "password": password,
+               "Login": "Login", "user_token": token or ""})
+    return username
+
+
+def dvwa_set_security_low(reqlog, ip, s):
+    """Set DVWA's security level to low, so vulnerability pages respond
+    the same way every session."""
+    base = BASE_SITES["dvwa"]
+    r = send(reqlog, s, ip, "GET", base + "/security.php", "normal", "", site="dvwa")
+    token = get_csrf_token(r.text) if r is not None else None
+    send(reqlog, s, ip, "POST", base + "/security.php", "normal", "", site="dvwa",
+         data={"security": "low", "seclev_submit": "Submit", "user_token": token or ""})
+
+
+def run_normal_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip)
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+
+    for page in random.sample(DVWA_STATIC_PAGES, k=random.randint(2, 3)):
+        send(reqlog, s, ip, "GET", base + page, "normal", "", site="dvwa")
+        pause()
+
+    if random.random() < 0.15:
+        missing = random.choice(["old_page.php", "report.php", "export.php"])
+        send(reqlog, s, ip, "GET", base + "/" + missing, "normal", "", site="dvwa")
+        pause()
+
+    # visit vulnerability pages with innocent input - the hardest "normal"
+    # case, since the page itself is attack-prone but the value isn't.
+    for _ in range(random.randint(2, 4)):
+        kind = random.choice(list(DVWA_VULN_PAGES.keys()))
+        page, param = DVWA_VULN_PAGES[kind]
+        roll = random.random()
+        if roll < 0.4:
+            value = str(random.randint(1, 20))
+        elif roll < 0.75:
+            value = random.choice(HARD_NORMAL_NAMES)
+        else:
+            value = random.choice(HARD_NORMAL_PHRASES)
+        params = {param: value}
+        if kind in ("sqli", "xss"):
+            params["Submit"] = "Submit"
+        send(reqlog, s, ip, "GET", base + page, "normal", "", site="dvwa", params=params)
+        pause()
+
+    return start, now_iso()
+
+
+def run_sqli_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, ATTACK_UAS["sqli"])
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+    cover = random.choice(HARD_NORMAL_NAMES) if random.random() < 0.3 else str(random.randint(1, 20))
+    send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "normal", "", site="dvwa",
+         params={"id": cover, "Submit": "Submit"})
+    pause()
+    for payload in random.sample(SQLI_PAYLOADS, k=random.randint(4, 8)):
+        p = vary(payload)
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "attack", "sqli", site="dvwa",
+             params={"id": p, "Submit": "Submit"})
+        pause()
+    return start, now_iso()
+
+
+def run_xss_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, random.choice(BROWSER_UAS))
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+    cover = random.choice(HARD_NORMAL_NAMES) if random.random() < 0.3 else random.choice(PRODUCT_TERMS)
+    send(reqlog, s, ip, "GET", base + "/vulnerabilities/xss_r/", "normal", "", site="dvwa",
+         params={"name": cover, "Submit": "Submit"})
+    pause()
+    for payload in random.sample(XSS_PAYLOADS, k=random.randint(4, 8)):
+        p = vary(payload)
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/xss_r/", "attack", "xss", site="dvwa",
+             params={"name": p})
+        pause()
+    return start, now_iso()
+
+
+def run_traversal_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, ATTACK_UAS["traversal"])
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+    for payload in random.sample(TRAVERSAL_PAYLOADS, k=random.randint(4, 7)):
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", "attack", "traversal", site="dvwa",
+             params={"page": payload})
+        pause()
+    send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", "normal", "", site="dvwa",
+         params={"page": "include.php"})
+    return start, now_iso()
+
+
+def run_cmdi_session_dvwa(ip, reqlog):
+    """exec/ is a POST form with a CSRF token, so we GET the page for a
+    fresh token before every submission."""
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, random.choice(BROWSER_UAS))
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+    for payload in random.sample(CMDI_PAYLOADS, k=min(len(CMDI_PAYLOADS), random.randint(4, 8))):
+        r = send(reqlog, s, ip, "GET", base + "/vulnerabilities/exec/", "normal", "", site="dvwa")
+        token = get_csrf_token(r.text) if r is not None else None
+        p = vary(payload)
+        send(reqlog, s, ip, "POST", base + "/vulnerabilities/exec/", "attack", "cmdi", site="dvwa",
+             data={"ip": "127.0.0.1" + p, "Submit": "Submit", "user_token": token or ""})
+        pause()
+    return start, now_iso()
+
+
+def run_bruteforce_session_dvwa(ip, reqlog):
+    """brute/ requires being logged in (any of the 5 accounts), then the
+    attack targets 'admin' (fast/slow) or sprays across several of the 5
+    known fake accounts (spray)."""
+    base = BASE_SITES["dvwa"]
+    variant = random.choices(["fast", "slow", "spray"], weights=[50, 25, 25])[0]
+    s = session_http(ip, ATTACK_UAS["bruteforce"])
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+
+    if variant in ("fast", "slow"):
+        n = random.randint(6, 12) if variant == "fast" else random.randint(3, 5)
+        for _ in range(n):
+            send(reqlog, s, ip, "GET", base + "/vulnerabilities/brute/", "attack", "bruteforce",
+                 variant, site="dvwa",
+                 params={"username": "admin", "password": fake_password(), "Login": "Login"})
+            if variant == "slow":
+                time.sleep(random.uniform(5, 20))
+            else:
+                pause()
+    else:
+        victims = random.sample([a for a, _ in DVWA_ACCOUNTS], k=min(5, random.randint(2, 5)))
+        passwords = [fake_password() for _ in range(random.randint(1, 2))]
+        for victim in victims:
+            for _ in range(random.randint(2, 4)):
+                send(reqlog, s, ip, "GET", base + "/vulnerabilities/brute/", "attack", "bruteforce",
+                     variant, site="dvwa",
+                     params={"username": victim, "password": random.choice(passwords), "Login": "Login"})
+                pause()
+
+    return start, now_iso()
+
+
+def run_scan_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, ATTACK_UAS["scan"])
+    start = now_iso()
+    paths = random.sample(SCAN_PATHS, k=min(len(SCAN_PATHS), random.randint(15, 25)))
+    for path in paths:
+        send(reqlog, s, ip, "GET", base + "/" + path.lstrip("/"), "attack", "scan", site="dvwa")
+        quick_pause()
+    return start, now_iso()
+
+
+def run_enum_session_dvwa(ip, reqlog):
+    base = BASE_SITES["dvwa"]
+    s = session_http(ip, random.choice(BROWSER_UAS))
+    start = now_iso()
+    dvwa_login_session(reqlog, ip, s)
+    pause()
+    dvwa_set_security_low(reqlog, ip, s)
+    pause()
+    n = random.randint(15, 30)
+    ids = list(range(1, n + 1)) if random.random() < 0.5 else random.sample(range(1, 500), k=n)
+    for i in ids:
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "attack", "enum", site="dvwa",
+             params={"id": i, "Submit": "Submit"})
+        quick_pause()
+    return start, now_iso()
+
+
+ATTACK_RUNNERS_DVWA = {
+    "sqli": run_sqli_session_dvwa,
+    "xss": run_xss_session_dvwa,
+    "traversal": run_traversal_session_dvwa,
+    "bruteforce": run_bruteforce_session_dvwa,
+    "cmdi": run_cmdi_session_dvwa,
+    "scan": run_scan_session_dvwa,
+    "enum": run_enum_session_dvwa,
+}
+
+
 # ---------- capture new access.log lines produced by this run ----------
 def capture_log_start(log_path):
     if log_path.exists():
@@ -585,16 +838,24 @@ def capture_log_end(log_path, start_size, out_path):
 
 def main():
     ap = argparse.ArgumentParser(description="Generate labelled traffic for the lab.")
+    ap.add_argument("--site", choices=["juiceshop", "dvwa"], default="juiceshop",
+                     help="Which lab site to target.")
     ap.add_argument("--sessions", type=int, default=300)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-tag", type=str, default="",
                      help="Suffix for output files, e.g. 'run3' -> requests_run3.csv")
-    ap.add_argument("--log-path", type=str, default="lab/logs/access.log",
-                     help="Nginx access log to capture new lines from")
+    ap.add_argument("--log-path", type=str, default=None,
+                     help="Access log to capture new lines from. Defaults to "
+                          "lab/logs/access.log (juiceshop) or "
+                          "lab/logs/dvwa_access.log (dvwa).")
     ap.add_argument("--workers", type=int, default=8,
                      help="Concurrent sessions, to keep a full run fast. "
                           "Lower this if the lab becomes unstable under load.")
     args = ap.parse_args()
+
+    if args.log_path is None:
+        args.log_path = ("lab/logs/access.log" if args.site == "juiceshop"
+                          else "lab/logs/dvwa_access.log")
 
     random.seed(args.seed)
     reqlog = RequestLog()
@@ -608,9 +869,12 @@ def main():
         log_path = ROOT / log_path
     log_start_size = capture_log_start(log_path)
 
+    normal_runner = run_normal_session if args.site == "juiceshop" else run_normal_session_dvwa
+    attack_runners = ATTACK_RUNNERS if args.site == "juiceshop" else ATTACK_RUNNERS_DVWA
+
     n_attack = int(args.sessions * 0.30)
     n_normal = args.sessions - n_attack
-    plan = ["normal"] * n_normal + random.choices(list(ATTACK_RUNNERS.keys()), k=n_attack)
+    plan = ["normal"] * n_normal + random.choices(list(attack_runners.keys()), k=n_attack)
     random.shuffle(plan)
 
     done_count = [0]
@@ -619,10 +883,10 @@ def main():
     def job(kind):
         ip = next_ip()
         if kind == "normal":
-            start, end = run_normal_session(ip, reqlog)
+            start, end = normal_runner(ip, reqlog)
             row = [ip, "normal", "", start, end]
         else:
-            start, end = ATTACK_RUNNERS[kind](ip, reqlog)
+            start, end = attack_runners[kind](ip, reqlog)
             row = [ip, "attack", kind, start, end]
         with session_rows_lock:
             session_rows.append(row)
@@ -643,10 +907,10 @@ def main():
         w.writerows(session_rows)
     reqlog.write(requests_out)
 
-    log_out_path = generated_log_path(args.out_tag)
+    log_out_path = generated_log_path(args.site, args.out_tag)
     n_log_lines = capture_log_end(log_path, log_start_size, log_out_path)
 
-    print(f"\nDone in {elapsed:.0f}s: {len(session_rows)} sessions -> {sessions_out}")
+    print(f"\nDone in {elapsed:.0f}s: site={args.site}, {len(session_rows)} sessions -> {sessions_out}")
     print(f"      {len(reqlog.rows)} requests -> {requests_out}")
     print(f"      {n_log_lines} new access-log lines -> {log_out_path}")
 
@@ -654,10 +918,10 @@ def main():
     for code, count in sorted(reqlog.status_counts.items(), key=lambda x: str(x[0])):
         print(f"  {code}: {count}")
 
-    print("\nAttacks by type/variant:")
-    for (atype, variant), count in sorted(reqlog.attack_counts.items()):
+    print("\nAttacks by type/variant/site:")
+    for (atype, variant, site), count in sorted(reqlog.attack_counts.items()):
         label = f"{atype} ({variant})" if variant else atype
-        print(f"  {label}: {count}")
+        print(f"  {label} [{site}]: {count}")
 
 
 if __name__ == "__main__":

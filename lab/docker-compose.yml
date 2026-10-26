@@ -17,3 +17,36 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./logs:/var/log/nginx
+
+  dvwa-db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: lab_fake_root_pw
+      MYSQL_DATABASE: dvwa
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: lab_fake_dvwa_pw
+    # no "ports": only dvwa reaches this, on the internal Docker network
+
+  dvwa:
+    image: vulnerables/web-dvwa
+    restart: unless-stopped
+    depends_on:
+      - dvwa-db
+    environment:
+      MYSQL_HOSTNAME: dvwa-db
+      MYSQL_DATABASE: dvwa
+      MYSQL_USER: dvwa
+      MYSQL_PASSWORD: lab_fake_dvwa_pw
+    # no "ports": only our second Nginx can reach it
+
+  nginx-dvwa:
+    image: nginx:stable
+    restart: unless-stopped
+    depends_on:
+      - dvwa
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./nginx/nginx-dvwa.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
