@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
 from ml.detector import MODEL_PATH, to_frame  # noqa: E402
+from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 
 app = FastAPI(title="AI Attack Investigator")
 FRONTEND = ROOT / "frontend"
@@ -45,6 +46,10 @@ async def analyze(file: UploadFile = File(...)):
         for r, p in zip(rows, probs):
             r["attack_prob"] = round(float(p), 3)
             r["label"] = "attack" if p >= THRESHOLD else "normal"
+
+        for r in rows:
+            r["body"] = mask_secrets(r["body"])
+            r["path"] = mask_path(r["path"])
 
     attacks = sum(r["label"] == "attack" for r in rows)
     return {
