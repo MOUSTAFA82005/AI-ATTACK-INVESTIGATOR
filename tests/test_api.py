@@ -272,3 +272,55 @@ def test_investigate_too_large_returns_413(client, monkeypatch):
 def test_investigate_missing_model_returns_503(client, monkeypatch):
     monkeypatch.setattr(main, "detector", None)
     assert post_investigate(client, BRUTE_LOG).status_code == 503
+
+
+
+# ---------- /investigate: attack_type ----------
+
+@pytest.fixture
+def type_calls(monkeypatch):
+    """Replace attack_types with a fake that records every call, so we can check how it is called."""
+    calls = []
+
+    def fake_attack_types(methods, paths, bodies, model):
+        calls.append({"methods": list(methods), "paths": list(paths), "bodies": list(bodies)})
+        return ["xss" if "xss" in p else "sqli" for p in paths]
+
+    monkeypatch.setattr(main, "attack_types", fake_attack_types)
+    return calls
+
+
+ATTACK_LOG = (
+    '10.0.0.30 - - [16/Oct/2026:18:00:00 +0000] "GET /attack-sqli?id=1&pwd=abc HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+    '10.0.0.30 - - [16/Oct/2026:18:00:01 +0000] "GET /attack-sqli?id=2 HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+    '10.0.0.30 - - [16/Oct/2026:18:00:02 +0000] "GET /attack-xss?q=1 HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+    '10.0.0.31 - - [16/Oct/2026:18:00:03 +0000] "GET /index.html HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+)
+
+
+def test_investigate_attack_type_per_request_and_session(client, type_calls):
+    data = post_investigate(client, ATTACK_LOG).json()
+    attacker = session_of(data, "10.0.0.30")
+    assert [t["attack_type"] for t in attacker["timeline"]] == ["sqli", "sqli", "xss"]
+    assert attacker["attack_types"] == ["sqli", "xss"]          # most frequent first
+    normal = session_of(data, "10.0.0.31")
+    assert normal["timeline"][0]["attack_type"] is None
+    assert normal["attack_types"] == []
+
+
+def test_investigate_attack_types_called_once_on_unmasked_text(client, type_calls):
+    data = post_investigate(client, ATTACK_LOG).json()
+    assert len(type_calls) == 1                                  # one call for all attack rows
+    assert len(type_calls[0]["paths"]) == 3                      # only the attack rows
+    assert any("pwd=abc" in p for p in type_calls[0]["paths"])   # original, not masked
+    masked = session_of(data, "10.0.0.30")["timeline"][0]["path"]
+    assert "pwd=***" in masked and "abc" not in masked           # the response is masked
+
+
+def test_investigate_behaviour_used_for_session_only_attacks(client, type_calls):
+    data = post_investigate(client, BRUTE_LOG).json()
+    brute = session_of(data, "10.0.0.20")
+    assert all(t["label"] == "normal" for t in brute["timeline"])
+    assert all(t["attack_type"] == "bruteforce" for t in brute["timeline"])
+    assert brute["attack_types"] == ["bruteforce"]
+    assert type_calls == []                                      # no attack rows, so no call at all

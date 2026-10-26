@@ -5,6 +5,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from collections import Counter
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
 from ml.detector import MODEL_PATH, to_frame  # noqa: E402
 from ml.sessions import analyze_sessions  # noqa: E402
+from ml.attack_type import attack_types, load_type_model  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 
 app = FastAPI(title="AI Attack Investigator")
@@ -24,7 +26,7 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 # Loaded once at startup. Train it first with: python -m ml.train_detector
 detector = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
-
+type_model = load_type_model()
 
 @app.get("/")
 def index():
@@ -119,7 +121,6 @@ def _clean(value):
 
 _REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "body", "attack_prob", "label"]
 
-
 @app.post("/investigate")
 async def investigate(file: UploadFile = File(...)):
     """Group the requests of a log into sessions (one IP, gaps under 30 min) and score each one."""
@@ -145,17 +146,35 @@ async def investigate(file: UploadFile = File(...)):
 
     # Requests in time order. Rows without a readable time go last; ties keep file order.
     reqs = reqs.assign(_t=pd.to_datetime(reqs["timestamp"], utc=True, errors="coerce"))
-    reqs = reqs.sort_values("_t", kind="stable")
+    reqs = reqs.sort_values("_t", kind="stable").reset_index(drop=True)
+
+    # Attack type for the rows the model called attacks: ONE call, on the ORIGINAL
+    # (unmasked) method/path/body of all of them. Masking happens later.
+    reqs["attack_type"] = None
+    is_attack = reqs["label"] == "attack"
+    if is_attack.any():
+        sub = reqs[is_attack]
+        reqs.loc[is_attack, "attack_type"] = list(
+            attack_types(sub["method"].tolist(), sub["path"].tolist(), sub["body"].tolist(), type_model)
+        )
+
     timelines = {sid: group for sid, group in reqs.groupby("session")}
 
     out = []
     for s in sessions.to_dict("records"):
         s = {k: _clean(v) for k, v in s.items()}
+        behaviours = s["behaviours"]
         timeline = []
         group = timelines.get(s["session"])
         if group is not None:
             for r in group.to_dict("records"):
                 r = {k: _clean(v) for k, v in r.items()}
+                if r["label"] == "attack":
+                    attack_type = r["attack_type"]
+                elif r["session_attack"] == 1 and behaviours:
+                    attack_type = behaviours[0]          # part of a behaviour, not a single-request attack
+                else:
+                    attack_type = None
                 timeline.append({
                     "timestamp": r["timestamp"],
                     "method": r["method"],
@@ -166,8 +185,12 @@ async def investigate(file: UploadFile = File(...)):
                     "label": r["label"],
                     "session_attack": r["session_attack"],
                     "is_attack": r["label"] == "attack" or r["session_attack"] == 1,
+                    "attack_type": attack_type,
                 })
         s["timeline"] = timeline
+        # Distinct types in this session, most frequent first.
+        counts = Counter(t["attack_type"] for t in timeline if t["attack_type"])
+        s["attack_types"] = [name for name, _ in counts.most_common()]
         out.append(s)
 
     result["sessions_total"] = len(out)
