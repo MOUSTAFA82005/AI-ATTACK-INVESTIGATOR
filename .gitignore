@@ -9,6 +9,7 @@ venv/
 data/raw/*
 data/processed/*
 lab/logs/*
+data/labels/*
 !**/.gitkeep
 
 # Saved models

