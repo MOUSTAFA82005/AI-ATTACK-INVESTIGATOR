@@ -36,6 +36,9 @@ MIN_LOGIN_ATTEMPTS = 4       # on one login form, for sites that answer a failed
                              # normal users in run3/run4 (both sites): at most 3, so 4 is the
                              # lowest value that flags nobody normal. 5 missed the slow brute
                              # force on DVWA, which sends only 3 to 5 attempts.
+CLEAR_LOGIN_ATTEMPTS = 6     # below this (4-5 attempts, no clear failures) a session looks like a
+                             # user who mistyped a few times, so it stays medium risk: a warning
+                             # for the investigator, not a verdict
 MIN_IDS_PER_RESOURCE = 15    # normal users in run3: at most 4; leaves room for heavy shoppers
 MIN_PROBES = 3               # requests for files like /.env, /.git, *.bak
 MIN_NOT_FOUND = 10           # 404 answers (sites that return 404 for missing pages)
@@ -138,8 +141,10 @@ def _one_session(s):
         reasons.append(f"{n_attacks} requests carry an attack payload")
     if stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= MIN_LOGIN_ATTEMPTS:
         behaviours.append("bruteforce")
-        score += 40
-        reasons.append(f"{stats['failed_logins']} failed logins, {stats['login_attempts']} login attempts on {stats['login_form']}")
+        clear = stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= CLEAR_LOGIN_ATTEMPTS
+        score += 70 if clear else 40
+        reasons.append(f"{stats['failed_logins']} failed logins, {stats['login_attempts']} login attempts on {stats['login_form']}"
+                       + ("" if clear else " (possible slow brute force, or a user who mistyped)"))
         if ok_after_fail:
             score += 30
             reasons.append("a login succeeded after the failures (possible compromised account)")
