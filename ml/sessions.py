@@ -32,8 +32,10 @@ SESSION_GAP = pd.Timedelta(minutes=30)   # a new session starts after 30 min of 
 
 LOGIN_PATH = re.compile(r"login|signin|sign-in|logon|auth|session|token", re.I)
 MIN_FAILED_LOGINS = 3        # normal users in run3: at most 2 failures
-MIN_LOGIN_ATTEMPTS = 5       # on one login form, for sites that answer a failed login with 200/302;
-                             # normal users in run3/run4 (both sites): at most 3
+MIN_LOGIN_ATTEMPTS = 4       # on one login form, for sites that answer a failed login with 200/302;
+                             # normal users in run3/run4 (both sites): at most 3, so 4 is the
+                             # lowest value that flags nobody normal. 5 missed the slow brute
+                             # force on DVWA, which sends only 3 to 5 attempts.
 MIN_IDS_PER_RESOURCE = 15    # normal users in run3: at most 4; leaves room for heavy shoppers
 MIN_PROBES = 3               # requests for files like /.env, /.git, *.bak
 MIN_NOT_FOUND = 10           # 404 answers (sites that return 404 for missing pages)
