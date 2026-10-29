@@ -339,3 +339,27 @@ def test_investigate_behaviour_chosen_per_request(client, type_calls):
     assert types["/rest/user/login"] == "bruteforce"
     assert types["/.env"] == types["/.git/config"] == types["/backup.bak"] == "scan"
     assert set(s["attack_types"]) == {"bruteforce", "scan"}
+
+
+# DVWA-style: the brute force is a GET with the password in the query, the site
+# answers 200, and the same IP also scans. The brute-force requests must still be
+# labelled bruteforce in the timeline, not scan.
+SCAN_PAGES = ["/.env", "/.git/config", "/backup.bak", "/admin/", "/phpinfo.php", "/db.sql",
+              "/old/", "/test.php", "/shell.php", "/setup.php", "/web.config"]
+DVWA_LOG = "".join(
+    f'10.0.0.30 - - [16/Oct/2026:18:00:{i:02d} +0000] '
+    f'"GET /vulnerabilities/brute/?username=admin&password=pw{i}&Login=Login HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+    for i in range(5)
+) + "".join(
+    f'10.0.0.30 - - [16/Oct/2026:18:01:{i:02d} +0000] "GET {page} HTTP/1.1" 404 10 "-" "Mozilla/5.0"\n'
+    for i, page in enumerate(SCAN_PAGES)
+)
+
+
+def test_investigate_labels_get_bruteforce_next_to_scan(client):
+    s = post_investigate(client, DVWA_LOG).json()["sessions"][0]
+    assert {"bruteforce", "scan"} <= set(s["behaviours"])
+    brute = [t for t in s["timeline"] if t["path"].startswith("/vulnerabilities/brute/")]
+    assert len(brute) == 5
+    assert all(t["attack_type"] == "bruteforce" for t in brute)
+    assert "bruteforce" in s["attack_types"]
