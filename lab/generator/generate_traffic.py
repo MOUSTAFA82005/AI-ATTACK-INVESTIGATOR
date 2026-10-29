@@ -275,7 +275,17 @@ def _obfuscate(payload):
     return text
 
 
+# Inside a campaign every step reuses the same HTTP session (cookies, so one
+# login), like one attacker working in one browser or tool. Per thread, because
+# sessions run concurrently.
+_campaign = threading.local()
+
+
 def session_http(ip, user_agent=None):
+    shared = getattr(_campaign, "session", None)
+    if shared is not None:
+        shared.headers["User-Agent"] = user_agent or shared.headers["User-Agent"]
+        return shared
     s = requests.Session()
     s.headers.update({
         "X-Forwarded-For": ip,
@@ -592,14 +602,20 @@ def campaign_steps():
 
 
 def run_campaign(ip, reqlog, steps, runners):
-    """One attacker, several attacks in a row from the same IP. Each request keeps
-    the label of its own step; the session row says campaign and lists the steps."""
+    """One attacker, several attacks in a row from the same IP and the same HTTP
+    session (one login). Each request keeps the label of its own step; the
+    session row says campaign and lists the steps."""
     start = None
-    for i, step in enumerate(steps):
-        s_start, end = runners[step](ip, reqlog)
-        start = start or s_start
-        if i < len(steps) - 1:
-            pause()
+    _campaign.session = requests.Session()
+    _campaign.session.headers.update({"X-Forwarded-For": ip, "User-Agent": random.choice(BROWSER_UAS)})
+    try:
+        for i, step in enumerate(steps):
+            s_start, end = runners[step](ip, reqlog)
+            start = start or s_start
+            if i < len(steps) - 1:
+                pause()
+    finally:
+        _campaign.session = None
     return start, end
 
 
@@ -647,6 +663,8 @@ def dvwa_login_session(reqlog, ip, s):
     accounts). A real person sometimes mistypes their own password once
     or twice first."""
     base = BASE_SITES["dvwa"]
+    if getattr(s, "dvwa_user", None):          # already logged in (campaign)
+        return s.dvwa_user
     username, password = random.choice(DVWA_ACCOUNTS)
 
     r = send(reqlog, s, ip, "GET", base + "/login.php", "normal", "", site="dvwa")
@@ -664,6 +682,7 @@ def dvwa_login_session(reqlog, ip, s):
     send(reqlog, s, ip, "POST", base + "/login.php", "normal", "", site="dvwa",
          data={"username": username, "password": password,
                "Login": "Login", "user_token": token or ""})
+    s.dvwa_user = username
     return username
 
 
@@ -671,10 +690,13 @@ def dvwa_set_security_low(reqlog, ip, s):
     """Set DVWA's security level to low, so vulnerability pages respond
     the same way every session."""
     base = BASE_SITES["dvwa"]
+    if getattr(s, "dvwa_low", False):          # already set (campaign)
+        return
     r = send(reqlog, s, ip, "GET", base + "/security.php", "normal", "", site="dvwa")
     token = get_csrf_token(r.text) if r is not None else None
     send(reqlog, s, ip, "POST", base + "/security.php", "normal", "", site="dvwa",
          data={"security": "low", "seclev_submit": "Submit", "user_token": token or ""})
+    s.dvwa_low = True
 
 
 def run_normal_session_dvwa(ip, reqlog):
