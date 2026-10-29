@@ -4,7 +4,8 @@ generate_traffic.py - traffic generator for the AI Attack Investigator lab.
 LAB ONLY. Targets our own isolated lab sites and nothing else:
   juiceshop -> http://127.0.0.1:8080
   dvwa      -> http://127.0.0.1:8081
-This script refuses to run if these addresses are changed.
+This script refuses to run if these addresses are changed. If a port is taken
+on your machine, use --port (the host always stays 127.0.0.1).
 
 Each simulated session gets its own fake IP (10.1.x.y, to never clash with
 manual_examples.py's 10.0.0.x) sent via X-Forwarded-For, so Nginx logs a
@@ -26,6 +27,13 @@ data or logs):
 Usage:
     python lab/generator/generate_traffic.py --sessions 300 --seed 3 --out-tag run3
     python lab/generator/generate_traffic.py --site dvwa --sessions 50 --seed 99 --out-tag dvwa_check
+    python lab/generator/generate_traffic.py --sessions 300 --seed 7 --campaigns 60 --out-tag camp7
+
+Campaigns (--campaigns N): N of the attacker sessions go through several
+steps in a row from the same IP (for example scan > enum > sqli), like a
+real intrusion. Used for the next-step model. The steps are picked from
+CAMPAIGN_START / CAMPAIGN_NEXT below, and each step reuses the normal
+session function of that attack. With the default 0 a run is the same as before.
 """
 import argparse
 import csv
@@ -51,6 +59,21 @@ BASE_SITES = dict(ALLOWED_BASES)
 if BASE_SITES != ALLOWED_BASES:
     raise SystemExit("Refusing to run: BASE_SITES must stay the lab addresses.")
 BASE = BASE_SITES["juiceshop"]  # kept for the existing Juice Shop functions, unchanged
+
+LAB_HOST = "http://127.0.0.1"
+
+# ---------- campaigns: which step comes next (probabilities, written by us) ----------
+CAMPAIGN_START = {"scan": 0.6, "enum": 0.2, "bruteforce": 0.2}
+CAMPAIGN_NEXT = {
+    "scan":       {"enum": 0.25, "bruteforce": 0.25, "sqli": 0.2, "traversal": 0.15, "xss": 0.1, "cmdi": 0.05},
+    "enum":       {"sqli": 0.35, "bruteforce": 0.25, "xss": 0.2, "traversal": 0.1, "cmdi": 0.1},
+    "bruteforce": {"sqli": 0.3, "enum": 0.3, "xss": 0.2, "cmdi": 0.1, "traversal": 0.1},
+    "sqli":       {"xss": 0.3, "cmdi": 0.25, "traversal": 0.25, "enum": 0.2},
+    "xss":        {"sqli": 0.4, "cmdi": 0.3, "traversal": 0.3},
+    "traversal":  {"cmdi": 0.4, "sqli": 0.3, "xss": 0.3},
+    "cmdi":       {"traversal": 0.4, "sqli": 0.3, "xss": 0.3},
+}
+CAMPAIGN_STEPS = (3, 5)   # min and max number of steps
 
 ROOT = Path(__file__).resolve().parents[2]
 PAYLOAD_DIR = Path(__file__).resolve().parent / "payloads"
@@ -556,6 +579,30 @@ def run_enum_session(ip, reqlog):
     return start, now_iso()
 
 
+def _pick(probs):
+    return random.choices(list(probs), weights=list(probs.values()))[0]
+
+
+def campaign_steps():
+    """3 to 5 steps; the table never sends a step to itself, so no step repeats right away."""
+    steps = [_pick(CAMPAIGN_START)]
+    for _ in range(random.randint(*CAMPAIGN_STEPS) - 1):
+        steps.append(_pick(CAMPAIGN_NEXT[steps[-1]]))
+    return steps
+
+
+def run_campaign(ip, reqlog, steps, runners):
+    """One attacker, several attacks in a row from the same IP. Each request keeps
+    the label of its own step; the session row says campaign and lists the steps."""
+    start = None
+    for i, step in enumerate(steps):
+        s_start, end = runners[step](ip, reqlog)
+        start = start or s_start
+        if i < len(steps) - 1:
+            pause()
+    return start, end
+
+
 ATTACK_RUNNERS = {
     "sqli": run_sqli_session,
     "xss": run_xss_session,
@@ -856,7 +903,19 @@ def main():
     ap.add_argument("--workers", type=int, default=8,
                      help="Concurrent sessions, to keep a full run fast. "
                           "Lower this if the lab becomes unstable under load.")
+    ap.add_argument("--campaigns", type=int, default=0,
+                     help="How many attacker sessions go through several steps in a row "
+                          "(see CAMPAIGN_NEXT). Default 0: same traffic as before.")
+    ap.add_argument("--port", type=int, default=None,
+                     help="Port of the lab site on this machine, if not the default "
+                          "(8080 juiceshop, 8081 dvwa). The host stays 127.0.0.1.")
     args = ap.parse_args()
+    if args.port is not None:
+        global BASE
+        BASE_SITES[args.site] = f"{LAB_HOST}:{args.port}"
+        if args.site == "juiceshop":
+            BASE = BASE_SITES["juiceshop"]
+        print(f"{args.site}: using {BASE_SITES[args.site]}")
     if args.site == "dvwa" and args.workers != 1:
         # DVWA loses logged-in sessions when sessions run in parallel: most pages
         # then redirect (302) to the login page. One worker fixes it (dvwa_check run).
@@ -886,6 +945,13 @@ def main():
     n_normal = args.sessions - n_attack
     plan = ["normal"] * n_normal + random.choices(list(attack_runners.keys()), k=n_attack)
     random.shuffle(plan)
+    n_campaigns = min(args.campaigns, n_attack)
+    if n_campaigns:
+        # Turn n_campaigns of the attacker sessions into campaigns; the steps are
+        # picked here, before the sessions run, so a seed always gives the same plan.
+        attack_slots = [i for i, k in enumerate(plan) if k != "normal"]
+        for i in sorted(random.sample(attack_slots, k=n_campaigns)):
+            plan[i] = ("campaign", campaign_steps())
 
     done_count = [0]
     done_lock = threading.Lock()
@@ -894,10 +960,14 @@ def main():
         ip = next_ip()
         if kind == "normal":
             start, end = normal_runner(ip, reqlog)
-            row = [ip, "normal", "", start, end]
+            row = [ip, "normal", "", start, end, ""]
+        elif isinstance(kind, tuple):
+            steps = kind[1]
+            start, end = run_campaign(ip, reqlog, steps, attack_runners)
+            row = [ip, "attack", "campaign", start, end, ">".join(steps)]
         else:
             start, end = attack_runners[kind](ip, reqlog)
-            row = [ip, "attack", kind, start, end]
+            row = [ip, "attack", kind, start, end, ""]
         with session_rows_lock:
             session_rows.append(row)
         with done_lock:
@@ -913,7 +983,7 @@ def main():
     sessions_out.parent.mkdir(parents=True, exist_ok=True)
     with open(sessions_out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["ip", "label", "attack_type", "start_time", "end_time"])
+        w.writerow(["ip", "label", "attack_type", "start_time", "end_time", "steps"])
         w.writerows(session_rows)
     reqlog.write(requests_out)
 
@@ -932,6 +1002,13 @@ def main():
     for (atype, variant, site), count in sorted(reqlog.attack_counts.items()):
         label = f"{atype} ({variant})" if variant else atype
         print(f"  {label} [{site}]: {count}")
+
+    campaigns = [k[1] for k in plan if isinstance(k, tuple)]
+    if campaigns:
+        print(f"\nCampaigns: {len(campaigns)}")
+        print("  steps:", dict(Counter(st for c in campaigns for st in c).most_common()))
+        pairs = Counter(f"{a}>{b}" for c in campaigns for a, b in zip(c, c[1:]))
+        print("  step pairs:", dict(pairs.most_common()))
 
 
 if __name__ == "__main__":
