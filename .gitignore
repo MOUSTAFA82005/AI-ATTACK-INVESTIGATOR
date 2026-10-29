@@ -15,6 +15,7 @@ data/labels/*
 # Saved models
 *.joblib
 *.pkl
+models/*.json
 
 # OS / editors
 .DS_Store
