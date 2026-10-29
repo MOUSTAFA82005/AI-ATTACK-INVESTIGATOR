@@ -43,6 +43,7 @@ MIN_IDS_PER_RESOURCE = 15    # normal users in run3: at most 4; leaves room for 
 MIN_PROBES = 3               # requests for files like /.env, /.git, *.bak
 MIN_NOT_FOUND = 10           # 404 answers (sites that return 404 for missing pages)
 MIN_SERVER_ERRORS = 3        # 5xx answers
+MIN_COMMON_VISITS = 5        # a page opened this often by unflagged visitors is an ordinary page
 
 _ID_SEGMENT = re.compile(r"/(\d+)(?=/|$)")
 _NUMBER = re.compile(r"\d+")
@@ -195,6 +196,11 @@ def analyze_sessions(df):
     # In a scan, the probes are plain GETs of a path (no query, no form): a
     # search or a login from the same IP is ordinary use and is not marked.
     scan_like = ((d["method"] == "GET") & ~d["path"].str.contains(r"\?", regex=True)) | (d["status"] == 404)
+    # Pages that ordinary visitors of this site open too (sessions with no detected
+    # behaviour) are not probes: an attacker loading the login page is not scanning it.
+    quiet = d["session"].map(flags.map(len)) == 0
+    common = set(d.loc[quiet, "_path0"].value_counts().loc[lambda c: c >= MIN_COMMON_VISITS].index)
+    scan_like &= ~d["_path0"].isin(common)
     marks = {
         "bruteforce": beh.map(lambda b: "bruteforce" in b) & on_form,
         "enumeration": beh.map(lambda b: "enumeration" in b) & in_enum,
