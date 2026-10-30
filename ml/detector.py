@@ -53,6 +53,30 @@ def has_payload(X):
     return X[signal_columns(X)].sum(axis=1) > 0
 
 
+# Files a site may really offer for download. A request for one is a probe when a
+# scanner guesses it, but not when the site serves it to an ordinary visitor.
+DOWNLOAD_EXT = (".tar", ".gz", ".tgz", ".zip", ".conf", ".ini", ".java")
+_FILE_SIGNALS = ["p_probe_ext", "p_probe_path", "v_kw_total"]   # v_kw_total counts the first two
+
+
+def served_files(df, X, pred):
+    """Alarms that are only a download-like file name (.conf, .tar.gz, ...) that the site
+    served (2xx/3xx, or 416 = range of an existing file) to an IP with no other alarm.
+
+    Those are visitors downloading a real file, not scanners: a scanner guesses many
+    names and gets them refused, or also sends payloads. The caller sets pred to 0 for
+    these and keeps them as "unusual, review it". df needs ip, path, status."""
+    pred = np.asarray(pred).astype(bool)
+    path = df["path"].astype(str).str.split("?").str[0].str.lower().str.rstrip("/")
+    file_only = X[signal_columns(X)].drop(columns=_FILE_SIGNALS).sum(axis=1).values == 0
+    status = pd.to_numeric(df["status"], errors="coerce").fillna(0).values
+    served = ((status >= 200) & (status < 400)) | (status == 416)
+    cand = pred & file_only & served & path.map(lambda p: p.endswith(DOWNLOAD_EXT)).values \
+        & (X["p_probe_path"].values == 0)
+    other_alarm = pd.Series(pred & ~cand, index=df.index).groupby(df["ip"].values).transform("any").values
+    return cand & ~other_alarm
+
+
 def build_pipeline(hand_cols, pos_weight=1.0, n_jobs=2, use_tfidf=False):
     """use_tfidf=True also adds character n-grams of the user values."""
     parts = [("hand", "passthrough", hand_cols)]

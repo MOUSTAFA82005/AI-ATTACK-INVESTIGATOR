@@ -18,7 +18,7 @@ from eval.match_labels import match
 from eval.rules import rule_predict
 from ml.attack_type import attack_types, load_type_model
 from ml.defense import FixFinder, add_defense, load_block_rules
-from ml.detector import MODEL_PATH, to_frame
+from ml.detector import MODEL_PATH, served_files, to_frame
 from ml.next_step import NextStepModel, add_next_steps, merge_steps
 from ml.outliers import unusual_requests
 from ml.sessions import analyze_sessions
@@ -54,7 +54,9 @@ def _pipeline(df, drop_body=False):
     detector, type_model = joblib.load(MODEL_PATH), load_type_model()
     X = to_frame(df["method"], df["path"], df["body"])
     df["pred"] = detector.predict(X)
-    df["unusual"] = unusual_requests(X)
+    served = served_files(df, X, df["pred"])
+    df.loc[served, "pred"] = 0
+    df["unusual"] = unusual_requests(X) | served
     df["rules"] = rule_predict(df["method"], df["path"], df["body"])
     df["_key"] = range(len(df))                     # to line up the two session runs
     sessions, req = analyze_sessions(df)
