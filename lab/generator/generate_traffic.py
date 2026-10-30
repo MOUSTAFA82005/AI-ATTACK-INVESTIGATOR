@@ -235,6 +235,30 @@ CMDI_PAYLOADS = load_payloads("cmdi.txt")
 SCAN_PATHS = load_payloads("scan_paths.txt")
 
 
+_TIME_WORDS = re.compile(r"sleep|benchmark|waitfor|pg_sleep|ping\s+-[cn]|timeout", re.I)
+
+
+def payload_variant(attack_type, payload, target=""):
+    """
+    Sub-type label of a payload attack, from the raw payload (before vary()) and the field it
+    is sent in. Only labels; it uses no randomness, so traffic for a seed stays the same.
+      sqli:      blind (time-based) / login (sent in a login form) / query
+      xss:       stored (saved and shown to others: feedback, registration) / reflected
+      traversal: encoded (double-encoded or encoded dots, to slip past filters) / plain
+      cmdi:      blind (time-based) / os
+    """
+    timed = bool(_TIME_WORDS.search(payload))
+    if attack_type == "sqli":
+        return "blind" if timed else "login" if target == "login_email" else "query"
+    if attack_type == "xss":
+        return "stored" if target in ("feedback_comment", "register_email") else "reflected"
+    if attack_type == "traversal":
+        return "encoded" if re.search(r"%25|%2e", payload, re.I) else "plain"
+    if attack_type == "cmdi":
+        return "blind" if timed else "os"
+    return ""
+
+
 def vary(payload):
     """Apply a random surface variation to an attack payload."""
     choice = random.choices(
@@ -441,23 +465,24 @@ def send_payload_everywhere(reqlog, s, ip, attack_type, payload):
     p = vary(payload)
     target = random.choice(["search", "login_email", "register_email",
                              "feedback_comment", "basket_qty"])
+    v = payload_variant(attack_type, payload, target)
     if target == "search":
         send(reqlog, s, ip, "GET", BASE + "/rest/products/search",
-             "attack", attack_type, params={"q": p})
+             "attack", attack_type, v, params={"q": p})
     elif target == "login_email":
         send(reqlog, s, ip, "POST", BASE + "/rest/user/login",
-             "attack", attack_type, json={"email": p, "password": "x"})
+             "attack", attack_type, v, json={"email": p, "password": "x"})
     elif target == "register_email":
         send(reqlog, s, ip, "POST", BASE + "/api/Users/",
-             "attack", attack_type, json={
+             "attack", attack_type, v, json={
                  "email": p, "password": "x", "passwordRepeat": "x",
                  "securityQuestion": {"id": 1}, "securityAnswer": "x"})
     elif target == "feedback_comment":
         send(reqlog, s, ip, "POST", BASE + "/api/Feedbacks/",
-             "attack", attack_type, json={"comment": p, "rating": 1})
+             "attack", attack_type, v, json={"comment": p, "rating": 1})
     elif target == "basket_qty":
         send(reqlog, s, ip, "POST", BASE + "/api/BasketItems/",
-             "attack", attack_type, json={"ProductId": 1, "quantity": p})
+             "attack", attack_type, v, json={"ProductId": 1, "quantity": p})
 
 
 def run_sqli_session(ip, reqlog):
@@ -490,7 +515,8 @@ def run_traversal_session(ip, reqlog):
     s = session_http(ip, ATTACK_UAS["traversal"])
     start = now_iso()
     for payload in random.sample(TRAVERSAL_PAYLOADS, k=random.randint(4, 7)):
-        send(reqlog, s, ip, "GET", BASE + "/ftp/" + payload, "attack", "traversal")
+        send(reqlog, s, ip, "GET", BASE + "/ftp/" + payload, "attack", "traversal",
+             payload_variant("traversal", payload))
         pause()
     send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
          params={"q": random.choice(PRODUCT_TERMS)})
@@ -507,12 +533,13 @@ def run_cmdi_session(ip, reqlog):
     for payload in random.sample(CMDI_PAYLOADS, k=min(len(CMDI_PAYLOADS), random.randint(4, 8))):
         p = vary(payload)
         target = random.choice(["search", "feedback_comment"])
+        v = payload_variant("cmdi", payload)
         if target == "search":
             send(reqlog, s, ip, "GET", BASE + "/rest/products/search",
-                 "attack", "cmdi", params={"q": p})
+                 "attack", "cmdi", v, params={"q": p})
         else:
             send(reqlog, s, ip, "POST", BASE + "/api/Feedbacks/",
-                 "attack", "cmdi", json={"comment": p, "rating": 1})
+                 "attack", "cmdi", v, json={"comment": p, "rating": 1})
         pause()
     return start, now_iso()
 
@@ -752,7 +779,8 @@ def run_sqli_session_dvwa(ip, reqlog):
     pause()
     for payload in random.sample(SQLI_PAYLOADS, k=random.randint(4, 8)):
         p = vary(payload)
-        send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "attack", "sqli", site="dvwa",
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "attack", "sqli",
+             payload_variant("sqli", payload, "query"), site="dvwa",
              params={"id": p, "Submit": "Submit"})
         pause()
     return start, now_iso()
@@ -772,7 +800,8 @@ def run_xss_session_dvwa(ip, reqlog):
     pause()
     for payload in random.sample(XSS_PAYLOADS, k=random.randint(4, 8)):
         p = vary(payload)
-        send(reqlog, s, ip, "GET", base + "/vulnerabilities/xss_r/", "attack", "xss", site="dvwa",
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/xss_r/", "attack", "xss",
+             payload_variant("xss", payload, "search"), site="dvwa",
              params={"name": p})
         pause()
     return start, now_iso()
@@ -787,7 +816,8 @@ def run_traversal_session_dvwa(ip, reqlog):
     dvwa_set_security_low(reqlog, ip, s)
     pause()
     for payload in random.sample(TRAVERSAL_PAYLOADS, k=random.randint(4, 7)):
-        send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", "attack", "traversal", site="dvwa",
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", "attack", "traversal",
+             payload_variant("traversal", payload), site="dvwa",
              params={"page": payload})
         pause()
     send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", "normal", "", site="dvwa",
@@ -809,7 +839,8 @@ def run_cmdi_session_dvwa(ip, reqlog):
         r = send(reqlog, s, ip, "GET", base + "/vulnerabilities/exec/", "normal", "", site="dvwa")
         token = get_csrf_token(r.text) if r is not None else None
         p = vary(payload)
-        send(reqlog, s, ip, "POST", base + "/vulnerabilities/exec/", "attack", "cmdi", site="dvwa",
+        send(reqlog, s, ip, "POST", base + "/vulnerabilities/exec/", "attack", "cmdi",
+             payload_variant("cmdi", payload), site="dvwa",
              data={"ip": "127.0.0.1" + p, "Submit": "Submit", "user_token": token or ""})
         pause()
     return start, now_iso()
