@@ -195,7 +195,9 @@ _PROBE_EXT = (".bak", ".old", ".inc", ".orig", ".swp", ".save", ".tmp", ".java",
               ".config", ".conf", ".ini", ".log", ".sql", ".tar", ".gz", ".zip", "~")
 _PROBE_PATHS = ["/.git", "/.env", "/.svn", "/.htaccess", "/.htpasswd", "/_vti_",
                 "/wp-admin", "/wp-login", "/phpmyadmin", "/cgi-bin", "/server-status",
-                "/web.config", "/admin.php", "/shell", "/etc/"]
+                "/web.config", "/admin.php", "/etc/"]
+# a web shell: /shell.php, /shell.jsp, ... or /shell at the site root, not a blog page about shells
+_SHELL_RE = re.compile(r"/shell\.(php\d?|aspx?|jspx?|cgi|pl|py|sh)\b|^/shell/?(\?|$)")
 _ALL_RE = {"sql": _SQL_RE, "xss": _XSS_RE, "trav": _TRAV_RE, "cmd": _CMD_RE}
 _COMPILED = {k: [re.compile(p, re.I) for p in v] for k, v in _ALL_RE.items()}
 
@@ -296,7 +298,7 @@ def value_features(method, url, body="", user_agent=""):
     f["p_kw_xss"] = sum(len(p.findall(path.lower())) for p in _COMPILED["xss"])
     lp = path.lower().rstrip("/")
     f["p_probe_ext"] = int(any(lp.endswith(e) or (e + "/") in lp + "/" for e in _PROBE_EXT if e != ".log"))
-    f["p_probe_path"] = int(any(x in lp for x in _PROBE_PATHS))
+    f["p_probe_path"] = int(any(x in lp for x in _PROBE_PATHS) or bool(_SHELL_RE.search(lp)))
     # encoding tricks anywhere in the raw request
     f["double_encoded"] = int(bool(re.search(r"%25[0-9a-f]{2}", raw, re.I)))
     f["null_byte"] = int("%00" in raw or "\x00" in raw)
