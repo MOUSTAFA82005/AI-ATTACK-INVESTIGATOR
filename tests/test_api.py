@@ -3,6 +3,7 @@ Run: python -m pytest tests/
 """
 import sys
 from pathlib import Path
+import json
 
 import numpy as np
 import pytest
@@ -10,7 +11,9 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
 from backend.app import main  # noqa: E402
+from ml.next_step import NextStepModel  # noqa: E402
 
 
 # ---------- fakes ----------
@@ -23,20 +26,55 @@ class FakeDetector:
         return np.column_stack([1 - p, p])
 
 
+class FakeTree:
+    """A block-rule tree that blocks every session it is asked about."""
+
+    def predict(self, x):
+        return ["block"] * len(x)
+
+
+# X is just the list of paths here (see fake_to_frame), so the fakes look at the path text.
+def fake_served_files(df, X, pred):
+    return np.array(["served" in p for p in X], dtype=bool)
+
+
+def fake_unusual_requests(X):
+    return np.array(["odd" in p for p in X], dtype=bool)
+
+
+def fake_reasons(detector, X):
+    return [["looks like an attack"] if "attack" in p else [] for p in X]
+
+
 @pytest.fixture
 def client(monkeypatch):
     seen = {"bodies": []}
+    calls = {"unusual": [], "reasons": []}
 
     def fake_to_frame(methods, paths, bodies):
         seen["bodies"].extend(bodies)      # remember what the model "saw"
         return paths                        # the fake detector only needs the paths
 
+    def spy_unusual(X):
+        calls["unusual"].append(list(X))
+        return fake_unusual_requests(X)
+
+    def spy_reasons(detector, X):
+        calls["reasons"].append(list(X))
+        return fake_reasons(detector, X)
+
     monkeypatch.setattr(main, "detector", FakeDetector())
     monkeypatch.setattr(main, "to_frame", fake_to_frame)
+    monkeypatch.setattr(main, "served_files", fake_served_files)
+    monkeypatch.setattr(main, "unusual_requests", spy_unusual)
+    monkeypatch.setattr(main, "reasons", spy_reasons)
+    # Never depend on the model files that happen to exist on this machine.
+    monkeypatch.setattr(main, "next_step_model", None)
+    monkeypatch.setattr(main, "block_tree", None)
     c = TestClient(main.app)
     c.seen = seen
+    c.calls = calls
     return c
-
 
 def post_log(client, text, name="test.log"):
     return client.post("/analyze", files={"file": (name, text.encode("utf-8"), "text/plain")})
@@ -363,3 +401,136 @@ def test_investigate_labels_get_bruteforce_next_to_scan(client):
     assert len(brute) == 5
     assert all(t["attack_type"] == "bruteforce" for t in brute)
     assert "bruteforce" in s["attack_types"]
+
+
+    # ---------- /analyze: unusual, reasons, served files ----------
+
+def test_analyze_results_have_unusual_and_reasons(client):
+    results = post_log(client, COMBINED).json()["results"]
+    assert all("unusual" in r and "reasons" in r for r in results)
+    assert [r["reasons"] for r in results] == [[], ["looks like an attack"], []]
+
+
+def test_unusual_never_changes_the_label(client):
+    log = '10.0.0.5 - - [16/Oct/2026:18:00:00 +0000] "GET /odd?x=1 HTTP/1.1" 200 512 "-" "Mozilla/5.0"\n'
+    data = post_log(client, log).json()
+    assert data["results"][0]["unusual"] is True
+    assert data["results"][0]["label"] == "normal"
+    assert data["attacks"] == 0
+
+
+def test_served_file_is_normal_but_unusual(client):
+    log = '10.0.0.5 - - [16/Oct/2026:18:00:00 +0000] "GET /attack-served.tar.gz HTTP/1.1" 200 512 "-" "Mozilla/5.0"\n'
+    r = post_log(client, log).json()["results"][0]
+    assert r["label"] == "normal"          # the detector said attack, served_files overruled it
+    assert r["unusual"] is True            # but it stays marked "review this"
+    assert r["reasons"] == []              # a request called normal has no reasons
+
+
+# ---------- /investigate: stage, next step, defence ----------
+
+SESSION_KEYS = ["stage", "stage_path", "steps", "next_steps", "action", "action_reason",
+                "fixes", "waf_rules", "unusual_requests"]
+
+NORMAL_LOG = (
+    '10.0.0.60 - - [16/Oct/2026:18:00:00 +0000] "GET /index.html HTTP/1.1" 200 512 "-" "Mozilla/5.0"\n'
+    '10.0.0.60 - - [16/Oct/2026:18:00:05 +0000] "GET /about HTTP/1.1" 200 300 "-" "Mozilla/5.0"\n'
+)
+
+
+def test_investigate_new_keys_exist_everywhere(client):
+    data = post_investigate(client, BRUTE_LOG).json()
+    for s in data["sessions"]:
+        for key in SESSION_KEYS:
+            assert key in s, key
+        for t in s["timeline"]:
+            assert {"stage", "unusual", "reasons"} <= set(t)
+    assert "NaN" not in json.dumps(data)
+
+
+def test_investigate_stage_of_bruteforce(client):
+    brute = session_of(post_investigate(client, BRUTE_LOG).json(), "10.0.0.20")
+    assert brute["stage"] == "intrusion"                 # guessing that did not work (401)
+    assert brute["stage_path"] == ["intrusion"]
+    assert all(t["stage"] == "intrusion" for t in brute["timeline"])
+
+
+def test_investigate_normal_only_log_is_allowed(client):
+    data = post_investigate(client, NORMAL_LOG).json()
+    assert data["sessions_flagged"] == 0
+    s = data["sessions"][0]
+    assert s["action"] == "allow"
+    assert s["fixes"] == []
+    assert s["waf_rules"] == []
+    assert s["steps"] == [] and s["next_steps"] == []
+    assert s["stage"] == "" and s["stage_path"] == []
+
+
+def test_investigate_next_steps_with_a_model(client, monkeypatch):
+    monkeypatch.setattr(main, "next_step_model", NextStepModel.fit([["bruteforce", "sqli"]]))
+    data = post_investigate(client, BRUTE_LOG).json()
+    brute = session_of(data, "10.0.0.20")
+    assert brute["steps"] == ["bruteforce"]
+    assert brute["next_steps"]
+    step, prob = brute["next_steps"][0]
+    assert isinstance(step, str) and 0 < prob <= 1
+    assert session_of(data, "10.0.0.21")["next_steps"] == []
+
+
+def test_investigate_block_rule_tree_decides_the_action(client, monkeypatch):
+    monkeypatch.setattr(main, "block_tree", FakeTree())
+    data = post_investigate(client, BRUTE_LOG).json()
+    brute = session_of(data, "10.0.0.20")
+    assert brute["action"] == "block"
+    assert any("10.0.0.20" in line for line in brute["waf_rules"])
+    assert session_of(data, "10.0.0.21")["action"] == "allow"      # no attack, never blocked
+
+
+def test_investigate_works_without_the_model_files(client, monkeypatch):
+    monkeypatch.setattr(main, "next_step_model", None)
+    monkeypatch.setattr(main, "block_tree", None)
+    r = post_investigate(client, BRUTE_LOG)
+    assert r.status_code == 200
+    brute = session_of(r.json(), "10.0.0.20")
+    assert brute["next_steps"] == []
+    assert brute["action"] in ("block", "rate_limit", "allow")     # risk-level fallback
+
+
+def test_investigate_waf_rules_never_contain_values(client, type_calls):
+    log = "".join(
+        f'10.0.0.50 - - [16/Oct/2026:18:00:0{i} +0000] "GET /attack-sqli?id={i}&pwd=secret123 HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+        for i in range(2)
+    )
+    r = post_investigate(client, log)
+    s = r.json()["sessions"][0]
+    assert s["waf_rules"]                                          # there is something to apply
+    assert "secret123" not in r.text                               # not in rules, fixes or timeline
+    assert "pwd=***" in s["timeline"][0]["path"]
+
+
+# ---------- /investigate: unusual and reasons ----------
+
+def test_investigate_unusual_is_only_a_review_mark(client):
+    log = (
+        '10.0.0.70 - - [16/Oct/2026:18:00:00 +0000] "GET /odd?x=1 HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+        '10.0.0.70 - - [16/Oct/2026:18:00:01 +0000] "GET /index.html HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+    )
+    s = post_investigate(client, log).json()["sessions"][0]
+    assert s["unusual_requests"] == 1
+    assert [t["unusual"] for t in s["timeline"]] == [True, False]
+    assert s["risk_score"] == 0
+    assert not any(t["is_attack"] for t in s["timeline"])
+
+
+def test_investigate_reasons_only_for_attacks(client, type_calls):
+    s = post_investigate(client, ATTACK_LOG).json()
+    attacker = session_of(s, "10.0.0.30")
+    assert all(t["reasons"] == ["looks like an attack"] for t in attacker["timeline"])
+    assert session_of(s, "10.0.0.31")["timeline"][0]["reasons"] == []
+
+
+def test_new_modules_are_called_once_on_original_text(client, type_calls):
+    post_investigate(client, ATTACK_LOG)
+    assert len(client.calls["unusual"]) == 1
+    assert len(client.calls["reasons"]) == 1
+    assert any("pwd=abc" in p for p in client.calls["reasons"][0])   # unmasked

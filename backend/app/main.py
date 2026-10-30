@@ -13,9 +13,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
-from ml.detector import MODEL_PATH, to_frame  # noqa: E402
-from ml.sessions import LOGIN_PATH, _resource, analyze_sessions  # noqa: E402
+from ml.detector import MODEL_PATH, served_files, to_frame  # noqa: E402
+from ml.sessions import analyze_sessions  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
+from ml.stage import add_stages  # noqa: E402
+from ml.next_step import NextStepModel, add_next_steps  # noqa: E402
+from ml.defense import FixFinder, add_defense, load_block_rules  # noqa: E402
+from ml.outliers import unusual_requests  # noqa: E402
+from ml.explain import reasons  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 
 app = FastAPI(title="AI Attack Investigator")
@@ -27,6 +32,11 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 # Loaded once at startup. Train it first with: python -m ml.train_detector
 detector = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 type_model = load_type_model()
+# Both are None when the model file is missing; the endpoints still work without them.
+next_step_model = NextStepModel.load()      # models/next_step.json
+block_tree = load_block_rules()             # models/block_rules.joblib
+fix_finder = FixFinder()                    # k-NN over the knowledge base, built once
+
 
 @app.get("/")
 def index():
@@ -37,12 +47,16 @@ def index():
 def health():
     return {"status": "ok", "model_loaded": detector is not None}
 
+
 async def _read_and_predict(file: UploadFile):
     """Shared by /analyze and /investigate.
 
     Checks the model, the file size and the format, parses the log and runs the model.
     Returns (rows, skipped, fmt). The rows are NOT masked yet: each endpoint masks
     what it returns, after it has finished its own analysis.
+
+    Every row gets: attack_prob, label, unusual (review mark) and reasons (why the
+    detector called it an attack). unusual and reasons never change the label.
     """
     if detector is None:
         raise HTTPException(
@@ -68,11 +82,26 @@ async def _read_and_predict(file: UploadFile):
             f"{', '.join(FORMATS)}.",
         )
     if rows:
+        # Everything below works on the ORIGINAL (unmasked) text.
         X = to_frame([r["method"] for r in rows], [r["path"] for r in rows], [r["body"] for r in rows])
         probs = detector.predict_proba(X)[:, 1]
-        for r, p in zip(rows, probs):
+        pred = (probs >= THRESHOLD).astype(int)
+
+        # A real file that the site served to a visitor is not a probe (same as eval/final_test.py).
+        frame = pd.DataFrame({"ip": [r["ip"] for r in rows],
+                              "path": [r["path"] for r in rows],
+                              "status": [r["status"] for r in rows]})
+        served = np.asarray(served_files(frame, X, pred), dtype=bool)
+        pred[served] = 0
+
+        unusual = np.asarray(unusual_requests(X), dtype=bool) | served   # one call per log
+        why = reasons(detector, X)                                        # one call per log
+
+        for r, p, is_attack, odd, sentences, was_served in zip(rows, probs, pred, unusual, why, served):
             r["attack_prob"] = round(float(p), 3)
-            r["label"] = "attack" if p >= THRESHOLD else "normal"
+            r["label"] = "attack" if is_attack else "normal"
+            r["unusual"] = bool(odd)
+            r["reasons"] = [] if was_served else list(sentences)   # a request called normal has no reasons
     return rows, skipped, fmt
 
 
@@ -119,7 +148,10 @@ def _clean(value):
     return value
 
 
-_REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "body", "attack_prob", "label"]
+# "row" = the position of the request in `rows`; it lets us find the unusual mark and the
+# reasons of a request again after analyze_sessions has re-ordered everything.
+_REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body",
+                    "attack_prob", "label", "row"]
 
 @app.post("/investigate")
 async def investigate(file: UploadFile = File(...)):
@@ -140,7 +172,7 @@ async def investigate(file: UploadFile = File(...)):
         return result
 
     # Input for analyze_sessions: one row per request, pred = the model's decision.
-    df = pd.DataFrame(rows)[_REQUEST_COLUMNS]
+    df = pd.DataFrame(rows).assign(row=range(len(rows)))[_REQUEST_COLUMNS]
     df["pred"] = (df["label"] == "attack").astype(int)
     sessions, reqs = analyze_sessions(df)
 
@@ -157,6 +189,13 @@ async def investigate(file: UploadFile = File(...)):
         reqs.loc[is_attack, "attack_type"] = list(
             attack_types(sub["method"].tolist(), sub["path"].tolist(), sub["body"].tolist(), type_model)
         )
+    # The next-step and defence modules want "" (not None) for requests that are not payload attacks.
+    reqs["type_pred"] = [t if isinstance(t, str) else "" for t in reqs["attack_type"]]
+
+    # Stage first: defence needs the stage (and a critical session is always blocked).
+    reqs, sessions = add_stages(reqs, sessions)
+    sessions = add_next_steps(reqs, sessions, next_step_model)           # empty lists if no model
+    sessions = add_defense(reqs, sessions, fix_finder, block_tree)       # risk-level fallback if no tree
 
     timelines = {sid: group for sid, group in reqs.groupby("session")}
 
@@ -169,6 +208,7 @@ async def investigate(file: UploadFile = File(...)):
         if group is not None:
             for r in group.to_dict("records"):
                 r = {k: _clean(v) for k, v in r.items()}
+                source = rows[r["row"]]                    # the row as parsed (has unusual + reasons)
                 if r["label"] == "attack":
                     attack_type = r["attack_type"]
                 elif r["session_attack"] == 1 and behaviours:
@@ -186,11 +226,15 @@ async def investigate(file: UploadFile = File(...)):
                     "session_attack": r["session_attack"],
                     "is_attack": r["label"] == "attack" or r["session_attack"] == 1,
                     "attack_type": attack_type,
+                    "stage": r["stage"],
+                    "unusual": source["unusual"],
+                    "reasons": list(source["reasons"]),
                 })
         s["timeline"] = timeline
         # Distinct types in this session, most frequent first.
         counts = Counter(t["attack_type"] for t in timeline if t["attack_type"])
         s["attack_types"] = [name for name, _ in counts.most_common()]
+        s["unusual_requests"] = sum(t["unusual"] for t in timeline)   # a review mark, not a risk input
         out.append(s)
 
     result["sessions_total"] = len(out)
