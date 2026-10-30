@@ -39,6 +39,7 @@ _BEHAVIOUR_STEP = {"scan": "scan", "enumeration": "enum", "bruteforce": "brutefo
 _WORD = re.compile(r"[a-z][a-z0-9_]+")
 _USER_FIELD = re.compile(r"^(user(name)?|email|login|uname|account)$", re.I)
 SLOW_GAP_SECONDS = 5          # median gap between login attempts above this = spread out (slow)
+_TIME_WORDS = re.compile(r"sleep|benchmark|waitfor|pg_sleep|ping\s+-[cn]|timeout", re.I)   # as the generator
 MANY_ACCOUNTS = 4             # login attempts on at least this many user names = spraying (dev runs:
                               # one-account guessing shows 1-3 names, because DVWA adds its own login)
 
@@ -84,6 +85,11 @@ def evidence_text(step, rows, with_step=True):
         words += [n.lower() for n in field_names(p, b)]                     # field names
         words += _WORD.findall(_values(p, b).lower())                       # payload words
         words += _WORD.findall(str(p).lower().replace("%", " "))            # raw (still encoded)
+    raw = " ".join(rows["path"].astype(str)) + " " + " ".join(rows["body"].astype(str))
+    if re.search(r"%25[0-9a-f]{2}", raw, re.I):
+        words += ["double", "encoding", "bypass"]                         # %252F: encoded twice
+    if _TIME_WORDS.search(" ".join(_values(p, b) for p, b in zip(rows["path"], rows["body"]))):
+        words += ["time", "based", "delay", "slow", "response"]
     status = pd.to_numeric(rows["status"], errors="coerce")
     if (status.isin([401, 403])).any():
         words += ["failed", "401"]
@@ -217,8 +223,13 @@ def waf_rules(ip, action, steps, rule_id=1000001):
 # ------------------------------------------------------------------ all together
 def add_defense(req, sessions, finder=None, tree=None, k=2):
     """
-    Per session: `action` (block / rate_limit / allow), `fixes` (per step: nearest knowledge-base entries and their fixes) and
-    `waf_rules`. Sessions with no attack step get action "allow" and empty lists.
+    Per session: `action` (block / rate_limit / allow), `action_reason`, `fixes` (per step:
+    nearest knowledge-base entries and their fixes) and `waf_rules`. Sessions with no attack
+    step get action "allow" and empty lists.
+
+    One fixed rule sits above the tree: a CRITICAL session (high risk and the attack worked:
+    exploitation or data theft) is always blocked. The tree learns from the kind of attack,
+    so an ID enumeration that really took data would otherwise only be rate-limited.
     """
     finder = finder or FixFinder()
     steps = step_rows(req)
@@ -229,10 +240,16 @@ def add_defense(req, sessions, finder=None, tree=None, k=2):
     else:                                    # no trained tree: fall back to the risk level
         level = sessions.set_index("session")["risk_level"]
         actions = level.map({"critical": "block", "high": "block", "medium": "rate_limit"}).fillna("allow")
-    out_action, out_fixes, out_rules = [], [], []
+    level = sessions.set_index("session")["risk_level"]
+    out_action, out_reason, out_fixes, out_rules = [], [], [], []
     for n, (sid, ip) in enumerate(zip(sessions["session"], sessions["ip"])):
         st = steps.get(sid, {})
         action = actions.get(sid, "allow") if st else "allow"
+        reason = "block-rule tree" if tree is not None else "risk level (no trained tree)"
+        if st and level.get(sid) == "critical" and action != "block":
+            action, reason = "block", "critical: the attack worked (exploitation or data theft)"
+        if not st:
+            reason = "no attack seen"
         fixes = []
         for step, rows in st.items():
             near = finder.nearest(evidence_text(step, rows), k, family=step)
@@ -240,9 +257,11 @@ def add_defense(req, sessions, finder=None, tree=None, k=2):
                 {"id": e["id"], "title": e["title"], "owasp": e["owasp"], "cwe": e["cwe"],
                  "source": e["source"], "similarity": sim, "fix": e["fix"]} for e, sim in near]})
         out_action.append(action)
+        out_reason.append(reason)
         out_fixes.append(fixes)
         out_rules.append(waf_rules(ip, action, st, rule_id=1000001 + 10 * n) if st else [])
     sessions["action"] = out_action
+    sessions["action_reason"] = out_reason
     sessions["fixes"] = out_fixes
     sessions["waf_rules"] = out_rules
     return sessions

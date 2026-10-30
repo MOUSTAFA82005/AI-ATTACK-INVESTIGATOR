@@ -55,3 +55,19 @@ def test_sessions_without_attack_steps_are_allowed():
                              "server_errors": [0], "stage": [""]})
     out = add_defense(req, sessions)
     assert out.loc[0, "action"] == "allow" and out.loc[0, "fixes"] == [] and out.loc[0, "waf_rules"] == []
+
+
+def test_critical_sessions_are_always_blocked():
+    class RateLimitTree:                     # a tree that would only rate-limit everything
+        def predict(self, x):
+            return ["rate_limit"] * len(x)
+    req = _rows(["/api/Users/1", "/api/Users/2"]).assign(
+        ip="10.0.0.2", session="10.0.0.2#0", pred=0, session_attack=1, behaviour="enumeration", type_pred="")
+    sessions = pd.DataFrame({"session": ["10.0.0.2#0"], "ip": ["10.0.0.2"], "risk_score": [100],
+                             "risk_level": ["critical"], "attack_requests": [0], "failed_logins": [0],
+                             "max_ids_one_resource": [40], "probes": [0], "not_found": [0],
+                             "server_errors": [0], "stage": ["data_theft"]})
+    out = add_defense(req, sessions, tree=RateLimitTree())
+    assert out.loc[0, "action"] == "block" and out.loc[0, "action_reason"].startswith("critical")
+    out = add_defense(req, sessions.assign(risk_level="high"), tree=RateLimitTree())
+    assert out.loc[0, "action"] == "rate_limit"

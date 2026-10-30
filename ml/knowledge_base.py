@@ -142,7 +142,7 @@ KNOWLEDGE_BASE = [
         "title": "Blind (time-based) command injection",
         "owasp": "A03:2021 Injection", "cwe": "CWE-78",
         "source": "OWASP OS Command Injection Defense Cheat Sheet",
-        "signs": "cmdi command sleep ping timeout delay slow response blind",
+        "signs": "cmdi command sleep ping timeout delay slow response blind time based",
         "fix": [
             "Remove the shell call or pass arguments as a list without a shell.",
             "Validate the input strictly (for an IP: four numbers 0-255, nothing else).",
