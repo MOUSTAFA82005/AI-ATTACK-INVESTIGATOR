@@ -19,6 +19,8 @@ Sites differ in how a login and an ID look, so both are read in a general way
 - a login attempt is a POST to a login-like path, or any request that sends a
   password field (some sites log in with GET and always answer 200)
 - an ID is a number in the path (/api/Users/42) or in a query parameter (?id=42)
+- a missing page is a 404, or a 200 that is the site's catch-all page (same
+  answer size for many different paths), for sites that never answer 404
 """
 import json
 import re
@@ -44,6 +46,9 @@ MIN_PROBES = 3               # requests for files like /.env, /.git, *.bak
 MIN_NOT_FOUND = 10           # 404 answers (sites that return 404 for missing pages)
 MIN_SERVER_ERRORS = 3        # 5xx answers
 MIN_COMMON_VISITS = 5        # a page opened this often by unflagged visitors is an ordinary page
+CATCH_ALL_PATHS = 15         # a 200 answer of one size for this many different paths is the site's
+                             # catch-all page ("not found" sent as 200, as single-page apps do);
+                             # real pages of one size: at most 9 in the semicomplete log
 
 _ID_SEGMENT = re.compile(r"/(\d+)(?=/|$)")
 _NUMBER = re.compile(r"\d+")
@@ -64,6 +69,27 @@ def _id_of(path):
         if _NUMBER.fullmatch(value):
             return f"{p}?{name}={{id}}", value
     return None, None
+
+
+def _shape(path):
+    """Path without query, numbers -> {n}: /rest/basket/7 and /rest/basket/8 are one page."""
+    return re.sub(r"\d+", "{n}", str(path or "").split("?", 1)[0])
+
+
+def soft_not_found(d):
+    """True for requests answered with the site's catch-all page: status 200 with a size
+    that came back for >= CATCH_ALL_PATHS different pages, on a page that ordinary visitors
+    (IPs with no model alarm) do not open often. Needs size; all False without it."""
+    if "size" not in d:
+        return pd.Series(False, index=d.index)
+    size = pd.to_numeric(d["size"], errors="coerce").fillna(0)
+    shape = d["path"].map(_shape)
+    ok = (d["status"] == 200) & (size > 0)
+    catch = set(shape[ok].groupby(size[ok]).nunique().loc[lambda n: n >= CATCH_ALL_PATHS].index)
+    quiet_ip = ~d["pred"].astype(bool).groupby(d["ip"]).transform("any")
+    seen = d[ok & quiet_ip].groupby(shape[ok & quiet_ip])["ip"].nunique()
+    common = set(seen[seen >= MIN_COMMON_VISITS].index)
+    return ok & size.isin(catch) & ~shape.isin(common)
 
 
 def _resource(path):
@@ -133,6 +159,7 @@ def _one_session(s):
         "enumerated_resource": ids.idxmax() if len(ids) else "",
         "probes": int(probes),
         "not_found": int((s["status"] == 404).sum()),
+        "soft_not_found": int(s["_soft404"].sum()),
         "server_errors": int((s["status"] >= 500).sum()),
     }
 
@@ -153,10 +180,12 @@ def _one_session(s):
         behaviours.append("enumeration")
         score += 40
         reasons.append(f"{stats['max_ids_one_resource']} different IDs of {stats['enumerated_resource']}")
-    if stats["probes"] >= MIN_PROBES or stats["not_found"] >= MIN_NOT_FOUND:
+    missing = stats["not_found"] + stats["soft_not_found"]
+    if stats["probes"] >= MIN_PROBES or missing >= MIN_NOT_FOUND:
         behaviours.append("scan")
         score += 30
-        reasons.append(f"{stats['probes']} probes for hidden files, {stats['not_found']} not-found answers")
+        reasons.append(f"{stats['probes']} probes for hidden files, {missing} not-found answers"
+                       + (f" ({stats['soft_not_found']} of them the site's catch-all page)" if stats["soft_not_found"] else ""))
     if stats["server_errors"] >= MIN_SERVER_ERRORS and score:
         score += 10
         reasons.append(f"{stats['server_errors']} server errors")
@@ -182,6 +211,7 @@ def analyze_sessions(df):
     d = add_session_ids(df)
     bodies = d["body"] if "body" in d else pd.Series("", index=d.index)
     d["_path0"] = d["path"].str.split("?").str[0]
+    d["_soft404"] = soft_not_found(d)
     d["_login"] = [is_login_attempt(m, p, b) for m, p, b in zip(d["method"], d["path"], bodies)]
     id_info = d["path"].map(_id_of)
     d["_res"], d["_id"] = id_info.str[0], id_info.str[1]
@@ -195,7 +225,7 @@ def analyze_sessions(df):
     in_enum = d["_res"] == d["session"].map(sessions.set_index("session")["enumerated_resource"])
     # In a scan, the probes are plain GETs of a path (no query, no form): a
     # search or a login from the same IP is ordinary use and is not marked.
-    scan_like = ((d["method"] == "GET") & ~d["path"].str.contains(r"\?", regex=True)) | (d["status"] == 404)
+    scan_like = ((d["method"] == "GET") & ~d["path"].str.contains(r"\?", regex=True)) | (d["status"] == 404) | d["_soft404"]
     # Pages that ordinary visitors of this site open too (sessions with no detected
     # behaviour) are not probes: an attacker loading the login page is not scanning it.
     quiet = d["session"].map(flags.map(len)) == 0
@@ -211,5 +241,5 @@ def analyze_sessions(df):
     for name in reversed(list(marks)):               # bruteforce wins over enumeration over scan
         d.loc[marks[name], "behaviour"] = name
     d["session_attack"] = (d["behaviour"] != "").astype(int)
-    d = d.drop(columns=["_t", "_path0", "_login", "_res", "_id"])
+    d = d.drop(columns=["_t", "_path0", "_soft404", "_login", "_res", "_id"])
     return sessions.sort_values("risk_score", ascending=False, kind="stable").reset_index(drop=True), d
