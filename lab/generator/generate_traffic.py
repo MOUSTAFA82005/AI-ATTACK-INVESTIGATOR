@@ -28,13 +28,25 @@ Usage:
     python lab/generator/generate_traffic.py --sessions 300 --seed 3 --out-tag run3
     python lab/generator/generate_traffic.py --site dvwa --sessions 50 --seed 99 --out-tag dvwa_check
     python lab/generator/generate_traffic.py --sessions 300 --seed 7 --campaigns 60 --out-tag camp7
+    python lab/generator/generate_traffic.py --families all --sessions 400 --seed 6 --campaigns 60 --out-tag run6
 
 Campaigns (--campaigns N): N of the attacker sessions go through several
 steps in a row from the same IP (for example scan > enum > sqli), like a
 real intrusion. Used for the next-step model. The steps are picked from
 CAMPAIGN_START / CAMPAIGN_NEXT below, and each step reuses the normal
 session function of that attack. With the default 0 a run is the same as before.
+
+New attack families (--families all, generator v4): SSRF, XXE, SSTI, NoSQL injection,
+Log4Shell, LDAP injection and XPath injection join the attacker sessions on both
+sites. Their payloads are in payloads/v4_<family>.b64 (base64, one per line), built by
+build_v4_payloads.py from public sources the detector was NOT trained on. They are
+stored base64 because Windows Defender blocks plain files holding Log4Shell strings;
+for the same reason Log4Shell payloads are only sent URL-encoded (query string or
+form body), never raw in a JSON body or a header, so the access log never holds a raw
+JNDI lookup string. (This file itself never spells one out either, for the same reason.) With the default --families old a run is the same as before.
+Campaigns use the old families only.
 """
+import base64
 import argparse
 import csv
 import random
@@ -234,6 +246,18 @@ TRAVERSAL_PAYLOADS = load_payloads("traversal.txt")
 CMDI_PAYLOADS = load_payloads("cmdi.txt")
 SCAN_PATHS = load_payloads("scan_paths.txt")
 
+NEW_FAMILIES = ["ssrf", "xxe", "ssti", "nosql", "log4shell", "ldap", "xpath"]
+
+
+def load_b64_payloads(name):
+    """payloads/<name>: one base64-encoded payload per line (see build_v4_payloads.py)."""
+    path = PAYLOAD_DIR / name
+    return [base64.b64decode(line).decode("utf-8")
+            for line in path.read_text(encoding="ascii").split() if line]
+
+
+NEW_PAYLOADS = {}   # family -> payloads, filled by main() only with --families all
+
 
 _TIME_WORDS = re.compile(r"sleep|benchmark|waitfor|pg_sleep|ping\s+-[cn]|timeout", re.I)
 
@@ -256,6 +280,28 @@ def payload_variant(attack_type, payload, target=""):
         return "encoded" if re.search(r"%25|%2e", payload, re.I) else "plain"
     if attack_type == "cmdi":
         return "blind" if timed else "os"
+    return new_family_variant(attack_type, payload)
+
+
+def new_family_variant(attack_type, payload):
+    """Sub-type of a new-family payload (labels only, no randomness)."""
+    low = payload.lower()
+    if attack_type == "ssrf":
+        if re.search(r"169\.254\.169\.254|metadata|100\.100\.100\.200", low):
+            return "cloud"
+        return "internal" if low.startswith(("http://", "https://")) else "scheme"
+    if attack_type == "xxe":
+        if "xinclude" in low or "xi:include" in low:
+            return "xinclude"
+        if re.search(r'"https?://', low):
+            return "oob"
+        return "dos" if "system" not in low and "public" not in low else "file"
+    if attack_type == "ssti":
+        return "exec" if re.search(r"popen|exec|runtime|system|import|process|getenv|getcwd|`", low) else "probe"
+    if attack_type == "nosql":
+        return "js" if re.search(r"\$where|return|sleep|this\.|db\.|\|\||&&", low) else "operator"
+    if attack_type == "log4shell":
+        return "plain" if ("$" + "{jndi:") in low else "obfuscated"
     return ""
 
 
@@ -921,6 +967,166 @@ ATTACK_RUNNERS_DVWA = {
 }
 
 
+# ============================================================
+# New attack families (generator v4, --families all)
+# ============================================================
+# Where each family is sent. Juice Shop has real endpoints for some of them
+# (profile image URL = SSRF, profile username = SSTI, product reviews = NoSQL,
+# file upload = XXE); the others are probes against ordinary inputs, the way a
+# scanner tries every field.
+NEW_TARGETS_JS = {
+    "ssrf": ["profile_image_url", "redirect_to", "search"],
+    "xxe": ["xml_upload", "xml_feedback", "xml_login"],
+    "ssti": ["profile_username", "search", "feedback_comment"],
+    "nosql": ["reviews_patch", "login_json", "search", "reviews_path"],
+    "log4shell": ["search", "redirect_to", "profile_image_url"],   # URL-encoded places only
+    "ldap": ["login_email", "search", "feedback_comment"],
+    "xpath": ["login_email", "search", "feedback_comment"],
+}
+NEW_TARGETS_DVWA = {
+    "ssrf": ["fi_page", "xss_r_name"],
+    "xxe": ["xml_xss_s", "xml_sqli", "xml_exec"],
+    "ssti": ["xss_r_name", "sqli_id"],
+    "nosql": ["brute_params", "brute_json", "sqli_id"],
+    "log4shell": ["sqli_id", "xss_r_name", "brute_username"],      # all GET query strings
+    "ldap": ["brute_username", "sqli_id"],
+    "xpath": ["brute_username", "sqli_id"],
+}
+XML_HEADERS = {"Content-Type": "application/xml"}
+
+
+def vary_new(family, payload):
+    """Surface variation for the new families. The old vary() splits SQL words and
+    swaps spaces, which would break these payloads, so here a payload is either sent
+    as it is or URL-encoded once more. Log4Shell payloads already carry their own
+    obfuscation, and are sent as they are."""
+    if family == "log4shell" or random.random() < 0.7:
+        return payload
+    return urllib.parse.quote(payload, safe="")
+
+
+def _is_doc(payload):
+    return payload.lstrip().startswith(("{", "<"))
+
+
+def _nosql_params(payload):
+    return "[$" in payload and "=" in payload
+
+
+def send_new_payload_js(reqlog, s, ip, family, payload):
+    v = new_family_variant(family, payload)
+    targets = NEW_TARGETS_JS[family]
+    if family == "nosql":   # a document goes in a JSON body, "a[$ne]=1&b[$ne]=1" is the query string
+        targets = ([t for t in targets if t in ("reviews_patch", "login_json")] if _is_doc(payload) else
+                   ["search_params"] if _nosql_params(payload) else
+                   [t for t in targets if t in ("search", "reviews_path")])
+    target = random.choice(targets)
+    a = ("attack", family, v)
+    if family == "xxe":
+        url = {"xml_upload": "/file-upload", "xml_feedback": "/api/Feedbacks/",
+               "xml_login": "/rest/user/login"}[target]
+        send(reqlog, s, ip, "POST", BASE + url, *a, data=payload.encode(), headers=XML_HEADERS)
+        return
+    if target == "reviews_patch":
+        send(reqlog, s, ip, "PATCH", BASE + "/rest/products/reviews", *a,
+             data=payload.encode(), headers={"Content-Type": "application/json"})
+    elif target == "login_json":
+        send(reqlog, s, ip, "POST", BASE + "/rest/user/login", *a,
+             data=payload.encode(), headers={"Content-Type": "application/json"})
+    elif target == "search_params":
+        send(reqlog, s, ip, "GET", BASE + "/rest/products/search?" + payload.replace(" ", "%20"), *a)
+        return
+    p = vary_new(family, payload)
+    if target == "search":
+        send(reqlog, s, ip, "GET", BASE + "/rest/products/search", *a, params={"q": p})
+    elif target == "reviews_path":
+        send(reqlog, s, ip, "GET", BASE + "/rest/products/" + urllib.parse.quote(p, safe="") + "/reviews", *a)
+    elif target == "redirect_to":
+        send(reqlog, s, ip, "GET", BASE + "/redirect", *a, params={"to": p})
+    elif target == "profile_image_url":
+        send(reqlog, s, ip, "POST", BASE + "/profile/image/url", *a, data={"imageUrl": p})
+    elif target == "profile_username":
+        send(reqlog, s, ip, "POST", BASE + "/profile", *a, data={"username": p})
+    elif target == "login_email":
+        send(reqlog, s, ip, "POST", BASE + "/rest/user/login", *a, json={"email": p, "password": "x"})
+    elif target == "feedback_comment":
+        send(reqlog, s, ip, "POST", BASE + "/api/Feedbacks/", *a, json={"comment": p, "rating": 1})
+
+
+def send_new_payload_dvwa(reqlog, s, ip, family, payload):
+    base = BASE_SITES["dvwa"]
+    v = new_family_variant(family, payload)
+    targets = NEW_TARGETS_DVWA[family]
+    if family == "nosql":
+        targets = (["brute_json"] if _is_doc(payload) else
+                   ["brute_params"] if _nosql_params(payload) else ["sqli_id"])
+    target = random.choice(targets)
+    a = ("attack", family, v)
+    kw = {"site": "dvwa"}
+    if family == "xxe":
+        url = {"xml_xss_s": "/vulnerabilities/xss_s/", "xml_sqli": "/vulnerabilities/sqli/",
+               "xml_exec": "/vulnerabilities/exec/"}[target]
+        send(reqlog, s, ip, "POST", base + url, *a, data=payload.encode(), headers=XML_HEADERS, **kw)
+        return
+    if target == "brute_json":
+        send(reqlog, s, ip, "POST", base + "/vulnerabilities/brute/", *a,
+             data=payload.encode(), headers={"Content-Type": "application/json"}, **kw)
+        return
+    if target == "brute_params":
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/brute/?" + payload.replace(" ", "%20") + "&Login=Login",
+             *a, **kw)
+        return
+    p = vary_new(family, payload)
+    if target == "sqli_id":
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", *a, params={"id": p, "Submit": "Submit"}, **kw)
+    elif target == "xss_r_name":
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/xss_r/", *a, params={"name": p}, **kw)
+    elif target == "fi_page":
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/fi/", *a, params={"page": p}, **kw)
+    elif target == "brute_username":
+        send(reqlog, s, ip, "GET", base + "/vulnerabilities/brute/", *a,
+             params={"username": p, "password": fake_password(), "Login": "Login"}, **kw)
+
+
+def make_new_family_runner(family, site):
+    """One attacker trying 4 to 8 payloads of one new family, after one normal-looking request."""
+    def run(ip, reqlog):
+        s = session_http(ip, random.choice(BROWSER_UAS))
+        start = now_iso()
+        payloads = NEW_PAYLOADS[family]
+        picked = random.sample(payloads, k=min(len(payloads), random.randint(4, 8)))
+        if site == "juiceshop":
+            send(reqlog, s, ip, "GET", BASE + "/rest/products/search", "normal", "",
+                 params={"q": random.choice(PRODUCT_TERMS)})
+            pause()
+            for payload in picked:
+                send_new_payload_js(reqlog, s, ip, family, payload)
+                pause()
+        else:
+            base = BASE_SITES["dvwa"]
+            dvwa_login_session(reqlog, ip, s)
+            pause()
+            dvwa_set_security_low(reqlog, ip, s)
+            pause()
+            send(reqlog, s, ip, "GET", base + "/vulnerabilities/sqli/", "normal", "", site="dvwa",
+                 params={"id": str(random.randint(1, 20)), "Submit": "Submit"})
+            pause()
+            for payload in picked:
+                send_new_payload_dvwa(reqlog, s, ip, family, payload)
+                pause()
+        return start, now_iso()
+    run.__name__ = f"run_{family}_session_{site}"
+    return run
+
+
+def add_new_family_runners():
+    """--families all: load the v4 payloads and add one runner per new family on both sites."""
+    for family in NEW_FAMILIES:
+        NEW_PAYLOADS[family] = load_b64_payloads(f"v4_{family}.b64")
+        ATTACK_RUNNERS[family] = make_new_family_runner(family, "juiceshop")
+        ATTACK_RUNNERS_DVWA[family] = make_new_family_runner(family, "dvwa")
+
+
 # ---------- capture new access.log lines produced by this run ----------
 def capture_log_start(log_path):
     if log_path.exists():
@@ -959,6 +1165,9 @@ def main():
     ap.add_argument("--campaigns", type=int, default=0,
                      help="How many attacker sessions go through several steps in a row "
                           "(see CAMPAIGN_NEXT). Default 0: same traffic as before.")
+    ap.add_argument("--families", choices=["old", "all"], default="old",
+                     help="'all' adds the new attack families (SSRF, XXE, SSTI, NoSQL, Log4Shell, "
+                          "LDAP, XPath) to the attacker sessions. Default 'old': same traffic as before.")
     ap.add_argument("--port", type=int, default=None,
                      help="Port of the lab site on this machine, if not the default "
                           "(8080 juiceshop, 8081 dvwa). The host stays 127.0.0.1.")
@@ -978,6 +1187,10 @@ def main():
     if args.log_path is None:
         args.log_path = ("lab/logs/access.log" if args.site == "juiceshop"
                           else "lab/logs/dvwa_access.log")
+
+    if args.families == "all":
+        add_new_family_runners()
+        print("families: old + " + ", ".join(f"{f} ({len(NEW_PAYLOADS[f])} payloads)" for f in NEW_FAMILIES))
 
     random.seed(args.seed)
     reqlog = RequestLog()
