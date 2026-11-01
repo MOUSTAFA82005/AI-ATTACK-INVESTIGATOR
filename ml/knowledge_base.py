@@ -2,10 +2,11 @@
 knowledge_base.py - the weaknesses our system can name, and how to fix each one.
 
 One entry per weakness. `family` is the attack family the detector or the session
-layer reports (sqli, xss, traversal, cmdi, bruteforce, enum, scan). `signs` are the
-words a log shows when this weakness is attacked; the k-NN in ml/defense.py matches
-a session's evidence against them to pick the closest entry. `fix` is what the site
-owner should change, taken from the OWASP Cheat Sheet Series named in `source`.
+layer reports (sqli, xss, traversal, cmdi, ssrf, xxe, ssti, nosql, log4shell, ldap,
+xpath, bruteforce, enum, scan). `signs` are the words a log shows when this weakness
+is attacked; the k-NN in ml/defense.py matches a session's evidence against them to
+pick the closest entry. `fix` is what the site owner should change, taken from the
+OWASP Cheat Sheet Series (or the source named in `source`).
 
 We wrote these entries ourselves from OWASP, so k-NN retrieves from our own list,
 not from past real incidents. That is said in the report.
@@ -149,6 +150,146 @@ KNOWLEDGE_BASE = [
             "Set a timeout on any external program the page runs.",
         ],
     },
+    # ---------------------------------------------------------------- server-side request forgery
+    {
+        "id": "ssrf-internal",
+        "family": "ssrf",
+        "title": "Server-side request forgery to an internal address",
+        "owasp": "A10:2021 Server-Side Request Forgery", "cwe": "CWE-918",
+        "source": "OWASP Server-Side Request Forgery Prevention Cheat Sheet",
+        "signs": "ssrf url link fetch import webhook callback image localhost 127 internal port "
+                 "gopher dict file scheme redirect",
+        "fix": [
+            "Do not fetch a URL the user sends; if the feature needs it, allow only a fixed list of "
+            "hosts and schemes (https to named partner domains).",
+            "Resolve the host name and refuse private, loopback and link-local addresses "
+            "(127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254/16, ::1) before connecting.",
+            "Do not follow redirects when fetching, or check every hop against the same list.",
+            "Block outgoing traffic from the web server to the internal network at the firewall.",
+        ],
+    },
+    {
+        "id": "ssrf-cloud",
+        "family": "ssrf",
+        "title": "SSRF to the cloud metadata service",
+        "owasp": "A10:2021 Server-Side Request Forgery", "cwe": "CWE-918",
+        "source": "OWASP Server-Side Request Forgery Prevention Cheat Sheet",
+        "signs": "ssrf 169 254 metadata latest meta data computemetadata instance cloud credentials iam "
+                 "token aws gcp azure",
+        "fix": [
+            "Refuse link-local addresses (169.254.0.0/16) and metadata host names in any URL the "
+            "server fetches.",
+            "Require the token-based metadata service (AWS IMDSv2, GCP Metadata-Flavor header) so a "
+            "plain forged GET cannot read it.",
+            "Give the server's cloud role the least permissions it needs, and rotate its keys if "
+            "the metadata service was reached.",
+        ],
+    },
+    # ---------------------------------------------------------------- XML external entities
+    {
+        "id": "xxe-entity",
+        "family": "xxe",
+        "title": "XML external entity (XXE) in an XML upload or API",
+        "owasp": "A05:2021 Security Misconfiguration", "cwe": "CWE-611",
+        "source": "OWASP XML External Entity Prevention Cheat Sheet",
+        "signs": "xxe xml doctype entity system file etc passwd soap upload svg docx post body "
+                 "external dtd",
+        "fix": [
+            "Turn off DTDs (DOCTYPE) completely in the XML parser; this blocks XXE and the "
+            "entity-expansion denial of service.",
+            "If DTDs are needed, turn off external entities and external DTD loading in the parser "
+            "settings for the language used.",
+            "Prefer JSON for APIs; keep the XML library up to date.",
+            "Validate uploaded XML, SVG and Office files with a hardened parser before use.",
+        ],
+    },
+    # ---------------------------------------------------------------- server-side template injection
+    {
+        "id": "ssti-template",
+        "family": "ssti",
+        "title": "Server-side template injection",
+        "owasp": "A03:2021 Injection", "cwe": "CWE-1336",
+        "source": "OWASP Web Security Testing Guide: Testing for Server-side Template Injection "
+                  "(WSTG-INPV-18)",
+        "signs": "ssti template braces expression 7 7 49 jinja twig freemarker velocity config class "
+                 "globals name message preview email",
+        "fix": [
+            "Never build a template from user input; pass user input to a fixed template as data.",
+            "If users must write templates, use a logic-less engine (e.g. Mustache) or the engine's "
+            "sandbox mode.",
+            "Validate the field (no template delimiters such as {{ }} ${ } <% %> where not needed).",
+            "Run the application with the least privileges it needs.",
+        ],
+    },
+    # ---------------------------------------------------------------- NoSQL injection
+    {
+        "id": "nosql-operator",
+        "family": "nosql",
+        "title": "NoSQL (MongoDB) operator injection",
+        "owasp": "A03:2021 Injection", "cwe": "CWE-943",
+        "source": "OWASP Web Security Testing Guide: Testing for NoSQL Injection (WSTG-INPV-05.6); "
+                  "OWASP Injection Prevention Cheat Sheet",
+        "signs": "nosql mongodb operator ne gt regex where login username password json object "
+                 "auth bypass",
+        "fix": [
+            "Check the type of every input: a user name must be a string, not an object such as "
+            "{\"$ne\": 1}.",
+            "Remove or reject keys that start with $ or contain a dot before the query "
+            "(e.g. mongo-sanitize).",
+            "Turn off server-side JavaScript ($where) in the database settings.",
+            "Build queries with the driver's query builder and fixed field names.",
+        ],
+    },
+    # ---------------------------------------------------------------- Log4Shell
+    {
+        "id": "log4shell-jndi",
+        "family": "log4shell",
+        "title": "Log4Shell: JNDI lookup in logged input (CVE-2021-44228)",
+        "owasp": "A06:2021 Vulnerable and Outdated Components", "cwe": "CWE-917",
+        "source": "Apache Log4j Security Vulnerabilities page (CVE-2021-44228); "
+                  "OWASP Vulnerable Dependency Management Cheat Sheet",
+        "signs": "log4shell log4j jndi ldap rmi dns lookup java header user agent env lower upper "
+                 "callback",
+        "fix": [
+            "Upgrade Log4j 2 to 2.17.1 or later (Java 8) on every server and in every bundled library.",
+            "Until upgraded, remove the JndiLookup class from the log4j-core jar.",
+            "Block outgoing LDAP/RMI/DNS connections from application servers that do not need them.",
+            "Keep a list of the libraries each service uses so the next vulnerable one is found quickly.",
+        ],
+    },
+    # ---------------------------------------------------------------- LDAP injection
+    {
+        "id": "ldap-filter",
+        "family": "ldap",
+        "title": "LDAP injection in a directory search or login",
+        "owasp": "A03:2021 Injection", "cwe": "CWE-90",
+        "source": "OWASP LDAP Injection Prevention Cheat Sheet",
+        "signs": "ldap filter directory uid cn mail objectclass star parenthesis login search user "
+                 "active directory",
+        "fix": [
+            "Escape user input with the LDAP filter encoding of the framework before it goes into "
+            "a search filter.",
+            "Validate user names against an allow list of characters (no * ( ) & | ! =).",
+            "Bind with a low-privilege service account; authenticate users by binding as them, "
+            "not by a search filter.",
+        ],
+    },
+    # ---------------------------------------------------------------- XPath injection
+    {
+        "id": "xpath-query",
+        "family": "xpath",
+        "title": "XPath injection in an XML-backed lookup or login",
+        "owasp": "A03:2021 Injection", "cwe": "CWE-643",
+        "source": "OWASP Web Security Testing Guide: Testing for XPath Injection (WSTG-INPV-09)",
+        "signs": "xpath xml count child node name text string length substring quote or login user",
+        "fix": [
+            "Use precompiled XPath expressions with variables (parameterised XPath) instead of "
+            "joining strings.",
+            "Validate the input against an allow list; reject quotes and brackets where they are "
+            "not needed.",
+            "Return the same generic error for every failed lookup.",
+        ],
+    },
     # ---------------------------------------------------------------- brute force
     {
         "id": "bruteforce-account",
@@ -250,4 +391,5 @@ KNOWLEDGE_BASE = [
     },
 ]
 
-FAMILIES = ["sqli", "xss", "traversal", "cmdi", "bruteforce", "enum", "scan"]
+FAMILIES = ["sqli", "xss", "traversal", "cmdi", "ssrf", "xxe", "ssti", "nosql", "log4shell", "ldap", "xpath",
+            "bruteforce", "enum", "scan"]

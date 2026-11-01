@@ -28,13 +28,20 @@ FEATURE_TEXT = {
     "v_ctx_call": "a function call in a value",
     "v_ctx_shell": "shell characters (` $( | ) in a value",
     "v_chr_backslash": "backslashes in a value",
-    "v_chr_brace": "curly braces in a value",
+    "v_ctx_brace": "a template tag or object in a value ({{ }}, #{ }, {\"$ne\": })",
     "v_sql_comment": "an SQL comment (-- or /*)",
     "v_max_special_ratio": "a value made mostly of special characters",
     "v_kw_sql": "SQL keywords",
     "v_kw_xss": "script / event-handler words",
     "v_kw_trav": "path traversal (../) in a value",
     "v_kw_cmd": "an OS command after a separator",
+    "v_kw_ssrf": "a link to an internal address or a non-web scheme (SSRF)",
+    "v_kw_xxe": "an XML DOCTYPE / ENTITY declaration (XXE)",
+    "v_kw_ssti": "template code ({{ }}, ${ }, <% %>) (template injection)",
+    "v_kw_nosql": "a NoSQL operator ($ne, $where, ...)",
+    "v_kw_log4j": "a Log4j lookup (${jndi:...}) (Log4Shell)",
+    "v_kw_ldap": "LDAP filter syntax (*)( ...)",
+    "v_kw_xpath": "XPath syntax (count(/...), //node[...])",
     "v_tautology": "an always-true condition (like OR 1=1)",
     "v_crlf": "line breaks (CR/LF) in the request",
     "p_kw_trav": "path traversal in the URL path",
@@ -51,7 +58,8 @@ FEATURE_TEXT = {
 
 NOT_A_REASON = {"v_count", "v_log_total_len", "v_kw_total"}
 KEYWORD_PARTS = ["v_kw_sql", "v_kw_xss", "v_kw_trav", "v_kw_cmd", "p_kw_trav", "p_kw_xss",
-                 "p_probe_ext", "p_probe_path"]     # v_kw_total = their sum (ml/features.py)
+                 "p_probe_ext", "p_probe_path", "v_kw_ssrf", "v_kw_xxe", "v_kw_ssti", "v_kw_nosql",
+                 "v_kw_log4j", "v_kw_ldap", "v_kw_xpath"]     # v_kw_total = their sum (ml/features.py)
 
 
 def contributions(detector, X):

@@ -18,6 +18,12 @@ made with other tools (sqlmap, FuzzDB, Vega), so the model sees more kinds of
 attacks than CSIC has. Download payload_train.csv from that repo and save it as
 data/raw/httpparams_train.csv; if the file is missing we train on CSIC only.
 See notebooks/07_second_dataset.ipynb.
+
+New attack families (SSRF, XXE, SSTI, NoSQL, Log4Shell, LDAP, XPath): public payloads
+put inside normal CSIC requests (ml/new_families.py). Build data/raw/new_families.csv
+with python -m ml.build_new_families; only its "train" payloads are used here, the
+"heldout" ones are kept for the check in notebooks/17_new_families.ipynb. If the file
+is missing we train without them.
 """
 import time
 from urllib.parse import quote
@@ -25,6 +31,7 @@ from urllib.parse import quote
 import joblib
 import pandas as pd
 
+from ml import new_families
 from ml.detector import MODEL_PATH, ROOT, build_pipeline, has_payload, to_frame
 
 HTTPPARAMS = ROOT / "data" / "raw" / "httpparams_train.csv"
@@ -47,6 +54,13 @@ def main():
         X, y = pd.concat([X, Xh], ignore_index=True), pd.concat([y, yh], ignore_index=True)
     else:
         print(f"{HTTPPARAMS} not found: training on CSIC only")
+    if new_families.NEW_FAMILIES_CSV.exists():
+        normals = df[df["label"] == 0]
+        Xn, yn, fam, _ = new_families.load("train", normals)
+        print(f"adding {len(yn)} requests with new-family payloads {fam.value_counts().to_dict()}")
+        X, y = pd.concat([X, Xn], ignore_index=True), pd.concat([y, yn], ignore_index=True)
+    else:
+        print(f"{new_families.NEW_FAMILIES_CSV} not found: no new attack families")
 
     keep = (y == 0) | has_payload(X)
     print(f"dropping {(~keep).sum()} anomalies with no attack payload")

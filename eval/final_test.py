@@ -16,7 +16,7 @@ from sklearn.metrics import precision_score, recall_score
 from backend.app.log_parser import decode, parse_log
 from eval.match_labels import match
 from eval.rules import rule_predict
-from ml.attack_type import attack_types, load_type_model
+from ml.attack_type import TYPES, attack_types, load_type_model
 from ml.defense import FixFinder, add_defense, load_block_rules
 from ml.detector import MODEL_PATH, served_files, to_frame
 from ml.next_step import NextStepModel, add_next_steps, merge_steps
@@ -24,7 +24,7 @@ from ml.outliers import unusual_requests
 from ml.sessions import analyze_sessions
 from ml.stage import add_stages
 
-PAYLOAD_TYPES = ["sqli", "xss", "traversal", "cmdi"]
+PAYLOAD_TYPES = TYPES                      # sqli, xss, traversal, cmdi + the newer families
 DETECTORS = ["rules", "rules + sessions", "model", "model + sessions"]
 TOOL_IP = "172.19.0.7"      # the tools container in the lab; every other IP in a tool log is a normal visitor
 

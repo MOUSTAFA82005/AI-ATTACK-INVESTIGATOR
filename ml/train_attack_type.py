@@ -6,6 +6,8 @@ models/attack_type.joblib. Run from the repo root:
 
 Needs data/raw/httpparams_train.csv (see ml/train_detector.py). Only the
 attack rows are used; each value is sent as ?q=<value>, like in the detector.
+The "train" payloads of data/raw/new_families.csv (ml/new_families.py) add the
+newer families, inside normal CSIC requests as in the detector.
 The classes are unbalanced (mostly SQLi), so each class gets the same weight.
 """
 from urllib.parse import quote
@@ -15,6 +17,7 @@ import pandas as pd
 from sklearn.utils.class_weight import compute_sample_weight
 from xgboost import XGBClassifier
 
+from ml import new_families
 from ml.attack_type import TYPE_MODEL_PATH, TYPES
 from ml.detector import ROOT, to_frame
 
@@ -36,6 +39,11 @@ def build_model():
 
 def main():
     X, y = load(HTTPPARAMS)
+    if new_families.NEW_FAMILIES_CSV.exists():
+        Xn, _, fam, _ = new_families.load("train")
+        X = pd.concat([X, Xn.drop(columns="text")], ignore_index=True)
+        y = list(y) + [TYPES.index(f) for f in fam]
+        y = pd.Series(y).values
     print("training on", pd.Series(y).map(dict(enumerate(TYPES))).value_counts().to_dict())
     model = build_model().fit(X, y, sample_weight=compute_sample_weight("balanced", y))
     TYPE_MODEL_PATH.parent.mkdir(exist_ok=True)

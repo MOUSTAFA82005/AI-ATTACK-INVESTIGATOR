@@ -14,7 +14,7 @@ def _rows(paths, bodies=None, status=200, seconds=0):
 
 def test_knowledge_base_entries_are_complete():
     ids = [e["id"] for e in KNOWLEDGE_BASE]
-    assert len(ids) == len(set(ids)) and 15 <= len(ids) <= 20
+    assert len(ids) == len(set(ids)) and 20 <= len(ids) <= 30
     for e in KNOWLEDGE_BASE:
         assert e["family"] in FAMILIES and e["fix"] and e["owasp"] and e["cwe"].startswith("CWE-")
     assert {e["family"] for e in KNOWLEDGE_BASE} == set(FAMILIES)

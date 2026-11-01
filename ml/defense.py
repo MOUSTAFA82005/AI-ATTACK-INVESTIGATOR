@@ -28,13 +28,14 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 
+from ml.attack_type import TYPES
 from ml.detector import ROOT
 from ml.knowledge_base import KNOWLEDGE_BASE
 from ml.sessions import field_names, is_login_attempt
 from ml.stage import STAGES
 
 BLOCK_RULES_PATH = ROOT / "models" / "block_rules.joblib"
-PAYLOAD_STEPS = ["sqli", "xss", "traversal", "cmdi"]
+PAYLOAD_STEPS = TYPES                    # sqli, xss, traversal, cmdi and the newer families
 _BEHAVIOUR_STEP = {"scan": "scan", "enumeration": "enum", "bruteforce": "bruteforce"}
 _WORD = re.compile(r"[a-z][a-z0-9_]+")
 _USER_FIELD = re.compile(r"^(user(name)?|email|login|uname|account)$", re.I)
@@ -167,12 +168,29 @@ def load_block_rules(path=BLOCK_RULES_PATH):
 
 # ------------------------------------------------------------------ 3) WAF rules
 _CRS = {"sqli": "942 (SQL injection)", "xss": "941 (XSS)", "traversal": "930 (local file inclusion)",
-        "cmdi": "932 (remote command execution)", "scan": "913 (scanner detection)"}
+        "cmdi": "932 (remote command execution)", "scan": "913 (scanner detection)",
+        "nosql": "942 (SQL injection, incl. 942290 MongoDB)", "ssrf": "934 (generic attacks, incl. SSRF)",
+        "log4shell": "944 (Java attacks, incl. Log4Shell)"}
 # Command injection: a shell separator followed by a command name (a separator alone also
 # appears in normal text, e.g. "Great value; $5"). Checked on the dev runs in notebook 12.
 _CMDI = (r'@rx (?i)(?:[;|`\n]|&&|&\s|\$\()\s*'
          r'(?:cat|ls|id|whoami|uname|ifconfig|ipconfig|netstat|ping|sleep|wget|curl|nc|bash|sh|echo|type|dir)\b')
-_OPERATOR = {"sqli": "@detectSQLi", "xss": "@detectXSS", "cmdi": _CMDI}
+# The newer families: the attack syntax itself (the same idea as the patterns in ml/features.py).
+_NEW_OPERATOR = {
+    "ssrf": r"@rx (?i)(?:gopher|dict|file|ldap|tftp)://|(?:https?|ftp)://(?:[^/?#@]*@)?(?:localhost|127\.|"
+            r"0\.0\.0\.0|\[|169\.254\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|metadata\.google\.internal)",
+    "xxe": r"@rx (?i)<!(?:doctype|entity)|xi:include",
+    "ssti": r"@rx \{\{.*?\}\}|\{%.*?%\}|<%.*?%>|[#$*@]\{[^}]*[*+.(|'\x22][^}]*\}",
+    "nosql": r"@rx (?i)\$(?:ne|eq|gt|gte|lt|lte|in|nin|regex|where|exists|expr)\b",
+    "log4shell": r"@rx (?i)\$\{[^}]*(?:jndi|\$\{|lower:|upper:|env:|sys:|::-)",
+    "ldap": r"@rx \*\)\s*\(|\)\s*\(\s*[|&!]|\(\s*[|&!]\s*\(",
+    "xpath": r"@rx (?i)count\s*\(\s*/|string-length\s*\(|/(?:child|descendant|parent)::|'\s*\]\s*\|\s*//",
+}
+_OPERATOR = {"sqli": "@detectSQLi", "xss": "@detectXSS", "cmdi": _CMDI, **_NEW_OPERATOR}
+# Where to look when the attack is not in one named field: an XML document is the whole body,
+# a NoSQL operator sits in the parameter NAME (user[$ne]=1), Log4Shell is often in a header.
+_TARGET = {"xxe": "REQUEST_BODY", "nosql": "ARGS_NAMES|ARGS|REQUEST_BODY",
+           "log4shell": "REQUEST_HEADERS|REQUEST_URI|ARGS|REQUEST_BODY"}
 # Attackers encode twice and hide words in /**/ comments; decode and strip before matching.
 _DECODE = "t:none,t:urlDecodeUni,t:urlDecodeUni,t:removeComments"
 # Path traversal: two dots (also percent-encoded, once or many times) then a slash or backslash
@@ -201,10 +219,11 @@ def waf_rules(ip, action, steps, rule_id=1000001):
             rule_id += 1
         elif step in _OPERATOR:
             fields = Counter(n for p, b in zip(rows["path"], rows["body"]) for n in field_names(p, b))
-            target = "|".join(f"ARGS:{n}" for n, _ in fields.most_common(3)) or "ARGS"
+            target = _TARGET.get(step) or "|".join(f"ARGS:{n}" for n, _ in fields.most_common(3)) or "ARGS"
             rules.append(f'SecRule REQUEST_FILENAME "@streq {page}" "id:{rule_id},phase:2,deny,status:403,'
                          f'chain,msg:\'{step} on {page}\'"\n    SecRule {target} "{_OPERATOR[step]}" "{_DECODE}"')
-            rules.append(f"# also enable OWASP CRS rule group {_CRS[step]}")
+            if step in _CRS:
+                rules.append(f"# also enable OWASP CRS rule group {_CRS[step]}")
             rule_id += 1
         elif step == "bruteforce":
             rules.append("# nginx: limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;\n"

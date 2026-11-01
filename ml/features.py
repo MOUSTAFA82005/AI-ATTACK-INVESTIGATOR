@@ -201,6 +201,44 @@ _SHELL_RE = re.compile(r"/shell\.(php\d?|aspx?|jspx?|cgi|pl|py|sh)\b|^/shell/?(\
 _ALL_RE = {"sql": _SQL_RE, "xss": _XSS_RE, "trav": _TRAV_RE, "cmd": _CMD_RE}
 _COMPILED = {k: [re.compile(p, re.I) for p in v] for k, v in _ALL_RE.items()}
 
+# Newer attack families (improvement 3, notebooks/17_new_families.ipynb). Matched on the whole
+# decoded query + body, parameter NAMES included: NoSQL operators sit in the name
+# ("user[$ne]=1") and an XML document is one body, not name=value pairs. Every pattern is attack
+# syntax (a template tag, a DOCTYPE, an internal address), never a word a site uses for its own fields.
+_INTERNAL_HOST = (r"(localhost|127(\.\d+){0,3}|0\.0\.0\.0|0x[0-9a-f]{6,8}|\d{8,10}|0\d{1,3}\.|0(?=[:/]|$)|"
+                  r"\[[0-9a-f:.]*\]|169\.254\.\d+\.\d+|100\.100\.100\.200|metadata\.google\.internal|"
+                  r"10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|"
+                  r"[\w.-]*\.(nip\.io|xip\.io|sslip\.io|localtest\.me))")
+_CODE = r"[*+.(|'\"$\[]"
+_NEW_RE = {
+    "ssrf": [r"\b(gopher|dict|ldap|tftp|jar|netdoc|sftp)://", r"\bfile:/{2,}",
+             r"\b(https?|ftp)://([^/?#\s@]*@)?" + _INTERNAL_HOST + r"(?![\w.-])",
+             r"/latest/meta-data|/computemetadata/|/metadata/(v1|instance)"],
+    "xxe": [r"<!doctype\s+\w+\s*\[", r"<!entity", r"\bsystem\s+[\"'](file|https?|php|expect|ftp|jar|data|gopher):",
+            r"xi:include|xmlns:xi\s*=", r"&\w+;\s*</\w+>"],
+    # a template tag counts only with code inside (an operator, a call, a dot, a quote):
+    # "{{7*7}}" and "${T(java.lang.Runtime)}" do, "loved it {{really}}" and "use ${SAVE10}" do not
+    "ssti": [r"\{\{[^}]{0,200}?" + _CODE + r"[^}]{0,200}?\}\}", r"\{%.{0,200}?%\}", r"<%=?.{0,200}?%>",
+             r"[#*@$]\{[^}]{0,200}?" + _CODE + r"[^}]{0,200}?\}", r"\[\[[^\]]{0,200}?" + _CODE + r"[^\]]{0,200}?\]\]",
+             r"\{\{\s*[#/^>!~-]\s*\w", r"\{[#^?@]\w+[^{}]*\}.{0,200}?\{/\w+\}",   # Handlebars / Dust blocks
+             r"@\([^)]{0,100}?[*+/-][^)]{0,100}?\)",                               # Razor: @(1+2)
+             r"__(class|mro|subclasses|globals|builtins|init|import)__",
+             r"\b(lipsum|cycler|joiner|namespace|config|self|request)\s*(\.|\[|\|)\s*\w"],
+    "nosql": [r"\[\s*\$(ne|eq|gt|gte|lt|lte|in|nin|regex|where|exists|or|and|nor|not|expr|elemmatch)\s*\]",
+              r"[\"']?\$(ne|eq|gt|gte|lt|lte|in|nin|regex|where|exists|or|and|nor|not|expr|elemmatch)[\"']?\s*:",
+              r"\bthis\.\w+\s*(\.match|==|!=|\.length)", r"\bdb\.\w+\.(find|insert|update|remove)\s*\(",
+              r"['\"]\s*;\s*(return\b|sleep\s*\(|while\s*\(|it\s*=)", r";\s*return\s+(true|false|1|0)\b", r"['\"]?\s*\|\|\s*['\"]?\w+['\"]?\s*==\s*['\"]?\w"],
+    "log4j": [r"\$\{\s*jndi\s*:", r"\$\{[^}]{0,60}\$\{", r"\$\{\s*(lower|upper|env|sys|java|date|ctx|main|"
+              r"base64|::-|:-)[^}]*\}", r"\b(jndi|ldaps?|rmi|dns|iiop|corba|nds|nis)\s*:\s*/\s*/"],
+    "ldap": [r"\*\)\s*\(", r"\)\s*\(\s*[|&!]", r"\(\s*[|&!]\s*\(", r"\(\s*\w+\s*=\s*\*?\s*\)",
+             r"\*\s*\)\s*\)", r"\w\*\)"],
+    "xpath": [r"\bcount\s*\(\s*/", r"\bstring-length\s*\(", r"\bsubstring\s*\(\s*/",
+              r"\bname\s*\(\s*\)\s*=", r"/(child|descendant|parent|ancestor|following|preceding)::",
+              r"\btext\s*\(\s*\)", r"['\"]\s*\]\s*\|\s*//", r"\b(starts-with|contains)\s*\(\s*\.\./",
+              r"\bdoc\s*\(\s*['\"]", r"//\w+\s*\[", r"/\*\s*\)?\s*=|\(/\*\)|//\*"],
+}
+_NEW_COMPILED = {k: [re.compile(p, re.I | re.S) for p in v] for k, v in _NEW_RE.items()}
+
 _B64 = re.compile(r"[A-Za-z0-9+/_-]{4,}={1,2}")
 
 
@@ -256,9 +294,31 @@ _CTX_QUOTE = [re.compile(p) for p in (
     r"['\"]\s*(\)|;|--|#|/\*|=|\+|\|\||\b(or|and|xor|union|select|order|group|having|like)\b)",
     r"(=|\(|,)\s*['\"]",
 )]
+_CTX_BRACE = [re.compile(p) for p in (
+    r"(\{\{|\{%|[$#@*]\{)[^{}]{0,200}?[*+.(|'\"$\[:]",
+    r"\{\s*['\"]?\$?\w+['\"]?\s*:",
+)]
 _PROSE_PUNCT = ".,@_-:/'!?;()%&$#=+\"*"
 _TAUTOLOGY = re.compile(r"(?:\b(?:or|and|xor|where|having)\b|['\")]|\|\||&&)\s*"
                         r"\(*\s*(?:(\d+)\s*=\s*\1\b|'([^']*)'\s*=\s*'\2)")
+
+
+def raw_input_text(url, body=""):
+    """Query string and body, decoded, names included (for the newer families)."""
+    url = str(url or "")
+    return (_dec(url.split("?", 1)[1] if "?" in url else "") + "\n" + _dec(body)).lower()
+
+
+def new_family_counts(url, body=""):
+    """{family: number of matching patterns} for the newer families."""
+    whole = raw_input_text(url, body)
+    return {fam: sum(len(p.findall(whole)) for p in pats) for fam, pats in _NEW_COMPILED.items()}
+
+
+def new_family_hits(url, body=""):
+    """{family: number of DIFFERENT patterns that match} (for the attack type rules)."""
+    whole = raw_input_text(url, body)
+    return {fam: sum(bool(p.search(whole)) for p in pats) for fam, pats in _NEW_COMPILED.items()}
 
 
 def value_features(method, url, body="", user_agent=""):
@@ -282,7 +342,9 @@ def value_features(method, url, body="", user_agent=""):
     f["v_ctx_call"] = len(re.findall(r"[a-z_]\(", low))
     f["v_ctx_shell"] = len(re.findall(r"`|\$\(|\$\{|\|", text))
     f["v_chr_backslash"] = text.count("\\")
-    f["v_chr_brace"] = text.count("{") + text.count("}")
+    # Braces count only where they open code: a template tag with code inside ("{{7*7}}",
+    # "#{1+1}") or an object in a value ('{"$ne": 1}'). "Dear {customer}" is ordinary text.
+    f["v_ctx_brace"] = sum(len(p.findall(low)) for p in _CTX_BRACE)
     f["v_sql_comment"] = text.count("--") + text.count("/*")
     f["v_max_special_ratio"] = max(
         (sum(not (c.isalnum() or c.isspace() or c in _PROSE_PUNCT) for c in v) / max(len(v), 1)
@@ -302,7 +364,10 @@ def value_features(method, url, body="", user_agent=""):
     # encoding tricks anywhere in the raw request
     f["double_encoded"] = int(bool(re.search(r"%25[0-9a-f]{2}", raw, re.I)))
     f["null_byte"] = int("%00" in raw or "\x00" in raw)
+    for fam, n in new_family_counts(url, body).items():
+        f["v_kw_" + fam] = n
     f["v_kw_total"] = (f["v_kw_sql"] + f["v_kw_xss"] + f["v_kw_trav"] + f["v_kw_cmd"]
-                       + f["p_kw_trav"] + f["p_kw_xss"] + f["p_probe_ext"] + f["p_probe_path"])
+                       + f["p_kw_trav"] + f["p_kw_xss"] + f["p_probe_ext"] + f["p_probe_path"]
+                       + sum(f["v_kw_" + fam] for fam in _NEW_RE))
     f["scanner_agent"] = int(any(a in (user_agent or "").lower() for a in SCANNER_AGENTS))
     return f
