@@ -273,6 +273,9 @@ def user_values(url, body=""):
     vals = [v for _, v in parse_qsl(query, keep_blank_values=True)] if query else []
     if "=" in query and not vals:
         vals = [query]
+    # A query part with no "=" ("/page?<script>...", "/a.php?x&id=1") has no name: the
+    # whole part is what the user typed, so it is a value too (parse_qsl reads it as a name).
+    vals += [unquote(part.replace("+", " "), encoding="latin-1") for part in query.split("&") if part and "=" not in part]
     b = body.strip()
     if b:
         try:
