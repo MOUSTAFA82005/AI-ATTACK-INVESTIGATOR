@@ -3,7 +3,7 @@ The full pipeline on one labelled run, exactly as the backend uses it:
 detector (per request) + session layer + attack type, plus the unusual-request mark.
 investigate() adds the rest of the investigation (stage, next step, defence), and
 run_tool() runs the same pipeline on a real-tool log, where the label comes from the IP.
-Used by notebooks/09_final_test.ipynb (run5) and notebooks/16_final_test_run6.ipynb.
+Used by notebooks/09_final_test.ipynb (run5), 16_final_test_run6.ipynb and 18_final_test_v4.ipynb.
 
     python -m eval.final_test data/raw/dvwa_generated_dvwa_check.log data/labels/requests_dvwa_dvwa_check.csv
 """
@@ -78,12 +78,16 @@ def _pipeline(df, drop_body=False):
 def summary(req):
     """One row per detector: recall, precision, false alarms."""
     y = (req["label"] != "normal").values
+    # A false alarm inside an attacker's own session (a page the attacker loads between two attacks)
+    # is not the same mistake as flagging a normal user, so both counts are shown.
+    attacker = req.groupby("session")["label"].transform(lambda s: (s != "normal").any()).values
     rows = []
     for d in DETECTORS:
         p = req[d].values
         rows.append({"detector": d, "recall": recall_score(y, p), "precision": precision_score(y, p, zero_division=0),
-                     "false alarms": int(p[~y].sum()), "normal requests": int((~y).sum()),
-                     "attacks": int(y.sum())})
+                     "false alarms": int(p[~y].sum()),
+                     "of those, on normal users": int(p[~y & ~attacker].sum()),
+                     "normal requests": int((~y).sum()), "attacks": int(y.sum())})
     return pd.DataFrame(rows).set_index("detector").round(3)
 
 
