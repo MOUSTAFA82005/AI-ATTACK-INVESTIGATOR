@@ -21,6 +21,12 @@ Sites differ in how a login and an ID look, so both are read in a general way
 - an ID is a number in the path (/api/Users/42) or in a query parameter (?id=42)
 - a missing page is a 404, or a 200 that is the site's catch-all page (same
   answer size for many different paths), for sites that never answer 404
+
+v5 (checked on a real shop log, zanbil): pictures, scripts and styles, and paging or
+cache-busting numbers, are not object IDs; a scan needs its not-found answers to be at
+least 10% of the session (crawlers meet dead links too); pages are compared by shape;
+a session whose user agent is a search-engine crawler counts its page reading as low
+risk (never hidden: the user agent can be faked, and its attack payloads still count).
 """
 import json
 import re
@@ -44,6 +50,9 @@ CLEAR_LOGIN_ATTEMPTS = 6     # below this (4-5 attempts, no clear failures) a se
 MIN_IDS_PER_RESOURCE = 15    # normal users in run3: at most 4; leaves room for heavy shoppers
 MIN_PROBES = 3               # requests for files like /.env, /.git, *.bak
 MIN_NOT_FOUND = 10           # 404 answers (sites that return 404 for missing pages)
+MIN_NOT_FOUND_SHARE = 0.10   # ... and at least this share of the session's requests: a crawler that
+                             # reads thousands of real pages also meets some dead links (zanbil dev:
+                             # search-engine bots at 1-7%); lab scanners are at 16% or more
 MIN_SERVER_ERRORS = 3        # 5xx answers
 MIN_COMMON_VISITS = 5        # a page opened this often by unflagged visitors is an ordinary page
 CATCH_ALL_PATHS = 15         # a 200 answer of one size for this many different paths is the site's
@@ -51,8 +60,20 @@ CATCH_ALL_PATHS = 15         # a 200 answer of one size for this many different 
                              # real pages of one size: at most 9 in the semicomplete log
 
 _ID_SEGMENT = re.compile(r"/(\d+)(?=/|$)")
+# Files the browser fetches by itself (pictures, scripts, styles, fonts). A shop page shows dozens
+# of product pictures, so their numbers are not object IDs a visitor asks for.
+_STATIC = re.compile(r"\.(jpe?g|png|gif|webp|svg|ico|bmp|css|js|map|woff2?|ttf|eot|mp4|webm|mp3)$"
+                     r"|/(images?|img|thumbs?|thumbnails?|static|assets|media|fonts?|css|js)(/|$)", re.I)
+# Query parameters whose number is not an object: paging, sorting and cache-busting.
+_NOT_ID_PARAMS = {"_", "page", "p", "pg", "offset", "start", "limit", "size", "per_page", "perpage", "sort",
+                  "order", "t", "ts", "v", "ver", "rnd", "rand", "cb"}
 _NUMBER = re.compile(r"\d+")
 PASSWORD_FIELD = re.compile(r"pass|pwd", re.I)
+# Search-engine crawlers say who they are in the user agent. They read thousands of pages and
+# meet dead links, which looks like enumeration and scanning. The user agent can be faked, so a
+# crawler is never hidden: its reading counts as low risk, and any attack payload still counts.
+CRAWLER_AGENT = re.compile(r"googlebot|bingbot|msnbot|yandex(?:bot|images)|baiduspider|duckduckbot|applebot"
+                           r"|slurp|petalbot|seznambot|sogou", re.I)
 
 
 def _id_of(path):
@@ -62,11 +83,13 @@ def _id_of(path):
     '/vulnerabilities/sqli/?id=7'  -> ('/vulnerabilities/sqli/?id={id}', '7')
     """
     p, _, query = str(path or "").partition("?")
+    if _STATIC.search(p):
+        return None, None
     ids = _ID_SEGMENT.findall(p)
     if ids:
         return _ID_SEGMENT.sub("/{id}", p), "/".join(ids)
     for name, value in parse_qsl(query, keep_blank_values=True):
-        if _NUMBER.fullmatch(value):
+        if _NUMBER.fullmatch(value) and name.lower() not in _NOT_ID_PARAMS:
             return f"{p}?{name}={{id}}", value
     return None, None
 
@@ -144,6 +167,8 @@ def _one_session(s):
     ids = s[has_id].groupby("_res")["_id"].nunique()
     probes = sum(_is_probe(m, p) for m, p in zip(s["method"], s["path"]))
     n_attacks = int(s["pred"].sum())
+    agents = s["user_agent"] if "user_agent" in s else pd.Series("", index=s.index)
+    crawler = bool(agents.fillna("").astype(str).str.contains(CRAWLER_AGENT).mean() > 0.5)
 
     stats = {
         "ip": s["ip"].iloc[0],
@@ -157,10 +182,12 @@ def _one_session(s):
         "login_after_failures": ok_after_fail,
         "max_ids_one_resource": int(ids.max()) if len(ids) else 0,
         "enumerated_resource": ids.idxmax() if len(ids) else "",
+        "enumerated_resources": sorted(ids[ids >= MIN_IDS_PER_RESOURCE].index),
         "probes": int(probes),
         "not_found": int((s["status"] == 404).sum()),
         "soft_not_found": int(s["_soft404"].sum()),
         "server_errors": int((s["status"] >= 500).sum()),
+        "crawler": crawler,
     }
 
     behaviours, reasons, score = [], [], 0
@@ -176,16 +203,23 @@ def _one_session(s):
         if ok_after_fail:
             score += 30
             reasons.append("a login succeeded after the failures (possible compromised account)")
-    if stats["max_ids_one_resource"] >= MIN_IDS_PER_RESOURCE:
-        behaviours.append("enumeration")
-        score += 40
-        reasons.append(f"{stats['max_ids_one_resource']} different IDs of {stats['enumerated_resource']}")
     missing = stats["not_found"] + stats["soft_not_found"]
-    if stats["probes"] >= MIN_PROBES or missing >= MIN_NOT_FOUND:
-        behaviours.append("scan")
-        score += 30
-        reasons.append(f"{stats['probes']} probes for hidden files, {missing} not-found answers"
-                       + (f" ({stats['soft_not_found']} of them the site's catch-all page)" if stats["soft_not_found"] else ""))
+    enumerates = stats["max_ids_one_resource"] >= MIN_IDS_PER_RESOURCE
+    scans = stats["probes"] >= MIN_PROBES or (missing >= MIN_NOT_FOUND and missing >= MIN_NOT_FOUND_SHARE * len(s))
+    if crawler and (enumerates or scans):
+        score = max(score, 10)          # shown as low risk; never raises a risk the payloads gave
+        reasons.append(f"a search-engine crawler by its user agent (can be faked) reading many pages: "
+                       f"{stats['max_ids_one_resource']} IDs of one resource, {missing} not-found answers")
+    else:
+        if enumerates:
+            behaviours.append("enumeration")
+            score += 40
+            reasons.append(f"{stats['max_ids_one_resource']} different IDs of {stats['enumerated_resource']}")
+        if scans:
+            behaviours.append("scan")
+            score += 30
+            reasons.append(f"{stats['probes']} probes for hidden files, {missing} not-found answers"
+                           + (f" ({stats['soft_not_found']} of them the site's catch-all page)" if stats["soft_not_found"] else ""))
     if stats["server_errors"] >= MIN_SERVER_ERRORS and score:
         score += 10
         reasons.append(f"{stats['server_errors']} server errors")
@@ -222,15 +256,18 @@ def analyze_sessions(df):
     beh = d["session"].map(flags)
     # A brute force is the many attempts on one form, not the attacker's own login to the site.
     on_form = d["_login"] & (d["_path0"] == d["session"].map(sessions.set_index("session")["login_form"]))
-    in_enum = d["_res"] == d["session"].map(sessions.set_index("session")["enumerated_resource"])
+    enum_res = d["session"].map(sessions.set_index("session")["enumerated_resources"])
+    in_enum = pd.Series([r in e for r, e in zip(d["_res"], enum_res)], index=d.index)   # every resource swept
     # In a scan, the probes are plain GETs of a path (no query, no form): a
     # search or a login from the same IP is ordinary use and is not marked.
     scan_like = ((d["method"] == "GET") & ~d["path"].str.contains(r"\?", regex=True)) | (d["status"] == 404) | d["_soft404"]
     # Pages that ordinary visitors of this site open too (sessions with no detected
     # behaviour) are not probes: an attacker loading the login page is not scanning it.
     quiet = d["session"].map(flags.map(len)) == 0
-    common = set(d.loc[quiet, "_path0"].value_counts().loc[lambda c: c >= MIN_COMMON_VISITS].index)
-    scan_like &= ~d["_path0"].isin(common)
+    # Pages are compared by shape (numbers -> {n}), so /filter/b12,b40 and /filter/b7 are one page.
+    shape = d["path"].map(_shape)
+    common = set(shape[quiet].value_counts().loc[lambda c: c >= MIN_COMMON_VISITS].index)
+    scan_like &= ~shape.isin(common)
     marks = {
         "bruteforce": beh.map(lambda b: "bruteforce" in b) & on_form,
         "enumeration": beh.map(lambda b: "enumeration" in b) & in_enum,

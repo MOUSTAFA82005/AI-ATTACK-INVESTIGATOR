@@ -343,7 +343,11 @@ def value_features(method, url, body="", user_agent=""):
     f["v_ctx_tag"] = len(re.findall(r"<\s*[a-z!/?]", low))
     f["v_ctx_attr_break"] = len(re.findall(r"['\"]\s*>", low))
     f["v_ctx_call"] = len(re.findall(r"[a-z_]\(", low))
-    f["v_ctx_shell"] = len(re.findall(r"`|\$\(|\$\{|\|", text))
+    # A "|" counts only where shell can follow it: a lower-case command ("|ls", "| cat"), a path,
+    # a quote, "$(", or a new line ("||" always). Sites use "|" as a separator inside values,
+    # followed by a capital, a digit or another alphabet ("c221|Android", "216|Full HD", "v2|black"
+    # in Persian), which is not shell.
+    f["v_ctx_shell"] = len(re.findall(r"""`|\$\(|\$\{|\|\||\|(?=[ \t]*[a-z/\\.$`('"%]|[\r\n])""", text))
     f["v_chr_backslash"] = text.count("\\")
     # Braces count only where they open code: a template tag with code inside ("{{7*7}}",
     # "#{1+1}") or an object in a value ('{"$ne": 1}'). "Dear {customer}" is ordinary text.
