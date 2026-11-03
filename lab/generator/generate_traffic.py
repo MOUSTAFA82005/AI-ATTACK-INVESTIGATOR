@@ -71,6 +71,7 @@ ALLOWED_BASES = {
     "dvna": "http://127.0.0.1:8086",
     "vampi": "http://127.0.0.1:8087",
     "dvga": "http://127.0.0.1:8088",
+    "webgoat": "http://127.0.0.1:8089",
 }
 BASE_SITES = dict(ALLOWED_BASES)
 if BASE_SITES != ALLOWED_BASES:
@@ -1329,10 +1330,40 @@ SITE_SPECS = {
         "enum_found": lambda t: '"paste":{' in t.replace(" ", ""),
         "login_won": lambda r: '"accessToken":"' in r.text.replace(" ", ""),
     },
+    # ---- run7 unseen site (Amendment 3): OWASP WebGoat, Java/Spring, written from its own forms ----
+    # Lesson forms post to /WebGoat/<Lesson>/<task>; answers are JSON with the result in "output".
+    "webgoat": {
+        "register": ("/WebGoat/register.mvc", lambda acc: {"username": acc[0], "password": acc[1],
+                                                         "matchingPassword": acc[1], "agree": "agree"}),
+        "login": ("POST", "/WebGoat/login", lambda acc: {"username": acc[0], "password": acc[1]}),
+        "accounts": [],
+        "pages": ["/WebGoat/start.mvc", "/WebGoat/service/lessonmenu.mvc", "/WebGoat/HttpBasics.lesson",
+                  "/WebGoat/SqlInjection.lesson", "/WebGoat/CrossSiteScripting.lesson", "/WebGoat/IDOR.lesson",
+                  "/WebGoat/PathTraversal.lesson", "/WebGoat/SSRF.lesson"],
+        "missing": ["/WebGoat/admin.mvc", "/WebGoat/report", "/WebGoat/old/"],
+        "inputs": {
+            "employee": ("POST", "/WebGoat/SqlInjection/attack8", "name", {"auth_tan": "3SL99A"}, "names"),
+            "account": ("POST", "/WebGoat/SqlInjection/assignment5a", "account", {"operator": "", "injection": ""}, "names"),
+            "cart": ("GET", "/WebGoat/CrossSiteScripting/attack5a", "field1",
+                     {"QTY1": "1", "QTY2": "1", "QTY3": "1", "QTY4": "1", "field2": "111"},
+                     ["4128 3214 0002 1999", "4111 1111 1111 1111"]),
+            "host": ("POST", "/WebGoat/CommandInjection/task1/run", "host", {"custom": "", "observed": ""}, "hosts"),
+            "picture": ("GET", "/WebGoat/PathTraversal/random-picture", "id", {}, ["1", "2", "3", "4", "5"]),
+            "fetch": ("POST", "/WebGoat/SSRF/task2", "url", {}, ["images/cat.jpg", "images/tom.png", "images/jerry.png"]),
+        },
+        "attack_inputs": {"sqli": ["employee", "account"], "xss": ["cart"], "traversal": ["picture"],
+                          "cmdi": ["host"], "new": ["fetch", "employee", "cart"]},
+        "bruteforce": ("POST", "/WebGoat/login", "username", "password", {}, None),
+        "enum": ("PATH", "/WebGoat/IDOR/profile/{v}", None, {}),
+        "sqli_worked": lambda t: t.count("<tr>") >= 4,
+        "enum_found": lambda t: '"userId"' in t,
+        "login_won": lambda r: r.status_code in (301, 302) and "welcome.mvc" in r.headers.get("Location", ""),
+    },
 }
 EXTRA_SITES = list(SITE_SPECS)
-ATTACK_PREFIX = {"mutillidae": {"dns": "127.0.0.1"}, "dvna": {"ping": "127.0.0.1"}, "dvga": {"import": "/"}}
-EXTRA_PORTS = {"mutillidae": 8084, "bwapp": 8085, "dvna": 8086, "vampi": 8087, "dvga": 8088}
+ATTACK_PREFIX = {"mutillidae": {"dns": "127.0.0.1"}, "dvna": {"ping": "127.0.0.1"}, "dvga": {"import": "/"},
+                 "webgoat": {"host": "127.0.0.1"}}
+EXTRA_PORTS = {"mutillidae": 8084, "bwapp": 8085, "dvna": 8086, "vampi": 8087, "dvga": 8088, "webgoat": 8089}
 VAMPI_BOOKS = ["bookTitle" + str(n) for n in range(1, 100)]
 
 
@@ -1407,9 +1438,13 @@ def _spec_login(reqlog, s, ip, site):
     if spec.get("register"):
         user = "u" + "".join(random.choices(string.digits, k=7))
         acc = (user, fake_password())
-        send(reqlog, s, ip, "POST", base + "/register", "normal", "", site=site,
-             data={"name": "Lab " + user, "username": acc[0], "email": user + "@example-lab.test",
-                   "password": acc[1], "cpassword": acc[1]})
+        if spec["register"] is True:            # DVNA
+            send(reqlog, s, ip, "POST", base + "/register", "normal", "", site=site,
+                 data={"name": "Lab " + user, "username": acc[0], "email": user + "@example-lab.test",
+                       "password": acc[1], "cpassword": acc[1]})
+        else:                                   # (path, fields) of the site's own sign-up form
+            path, fields = spec["register"]
+            send(reqlog, s, ip, "POST", base + path, "normal", "", site=site, data=fields(acc))
         pause()
     else:
         acc = random.choice(spec["accounts"])

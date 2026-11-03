@@ -4,6 +4,7 @@
 #   bWAPP:      curl "http://127.0.0.1:8085/install.php?install=yes"
 #   Mutillidae: curl "http://127.0.0.1:8084/set-up-database.php"
 #   DVNA:       nothing (the generator registers its own fake users)
+#   WebGoat:    nothing (the generator registers its own fake users); run7 unseen site
 # Then: python lab/generator/generate_traffic.py --site bwapp|mutillidae|dvna
 #       --log-path lab/logs/<site>_access.log ...
 services:
@@ -59,4 +60,16 @@ services:
     ports: ["127.0.0.1:8088:80"]
     volumes:
       - ./nginx/nginx-dvga.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
+  # run7 unseen site (Amendment 3): never in training or dev data
+  webgoat:
+    image: webgoat/webgoat
+    restart: unless-stopped
+    environment: ["TZ=UTC", "WEBGOAT_HOST=0.0.0.0", "WEBWOLF_HOST=0.0.0.0"]
+  nginx-webgoat:
+    image: nginx:stable
+    depends_on: [webgoat]
+    ports: ["127.0.0.1:8089:80"]
+    volumes:
+      - ./nginx/nginx-webgoat.conf:/etc/nginx/nginx.conf:ro
       - ./logs:/var/log/nginx
