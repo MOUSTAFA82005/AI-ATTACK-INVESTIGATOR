@@ -77,3 +77,10 @@ Written after the tool runs and before any model has read their files. Only the 
   - First pass: `run7_tools_hashes_first.txt`.
   - Final set: `run7_tools_hashes.txt`, 30 files.
   - Run notes: `run7_tools_runs.txt`.
+
+## Amendment 3 (3 Nov 2026, before any WebGoat spec or traffic exists)
+
+- **Unseen site:** OWASP WebGoat, a Java/Spring app with form login and lesson pages. Safi chose it.
+- **Why it is a fair test:** none of the 7 training sites uses this stack.
+- **How its generator spec is written:** only from WebGoat's own pages and forms, with no model run on it.
+- **When models first see it:** in the single final run7 evaluation. WebGoat traffic is generated with seed 7007 and tag run7, and hashed as soon as it is written, like the other run7 files.
