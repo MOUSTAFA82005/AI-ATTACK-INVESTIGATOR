@@ -63,3 +63,17 @@ What keeps the test independent:
 - No file is opened except to count its lines.
 
 The unseen site keeps its rule: it is named here before its generator spec is written, and no model is run on it before the final run.
+
+## Amendment 2 (3 Nov 2026, sealed tool runs, before any model reads them)
+
+Written after the tool runs and before any model has read their files. Only the tools' own messages were read, never the logs.
+
+- **dalfox, second pass:** the first pass on DVWA, bWAPP and DVNA used the wrong cookie flag (`--cookie`) and sent no requests. Those three runs were redone with `--cookies`, and their files were replaced.
+- **medusa** runs on bWAPP and Mutillidae only:
+  - Juice Shop, VAmPI and DVGA log in with JSON, and medusa's web-form module sends form fields only.
+  - DVWA and DVNA answer every login with a 302 redirect, right or wrong password. The web-form module cannot read that answer and stops after one try. The two 2-line files from that try were removed. No traffic was made by hand to stand in for them.
+- **gobuster on Juice Shop** stopped by itself after 2 requests, because Juice Shop answers every path with 200 (catch-all). The file is kept as it is, with default settings.
+- **Hashes:**
+  - First pass: `run7_tools_hashes_first.txt`.
+  - Final set: `run7_tools_hashes.txt`, 30 files.
+  - Run notes: `run7_tools_runs.txt`.
