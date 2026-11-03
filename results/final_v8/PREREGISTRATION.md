@@ -84,3 +84,18 @@ Written after the tool runs and before any model has read their files. Only the 
 - **Why it is a fair test:** none of the 7 training sites uses this stack.
 - **How its generator spec is written:** only from WebGoat's own pages and forms, with no model run on it.
 - **When models first see it:** in the single final run7 evaluation. WebGoat traffic is generated with seed 7007 and tag run7, and hashed as soon as it is written, like the other run7 files.
+
+## Amendment 4 (3 Nov 2026, before the final run): a model was run on WebGoat-like traffic
+
+This breaks the rule in section 2 that no model is run on the unseen site before the final run. It is recorded here before the final run.
+
+**What happened:**
+
+- The final-run script (`eval/run7_final.py`) was dry-run on dev data to check that it works. The dry run used a WebGoat smoke run: 40 sessions with seed 999. The smoke run only checked that the generator spec works. It is not run7 data.
+- The script printed its numbers for that smoke run. ML recall was 0.691; rules recall was 0.981.
+- No sealed run7 file was opened or used.
+
+**What follows from it:**
+
+- Nothing in the models, code, features or thresholds is changed because of this number. The models stay byte-identical to `models.sha256`.
+- The WebGoat result of run7 is reported as it comes out. The report states that a weak result on WebGoat was already seen on the smoke run before the final run.
