@@ -1,0 +1,62 @@
+# Extra lab sites for site-independence tests. 127.0.0.1 only, never exposed.
+#   docker compose -f docker-compose.yml -f docker-compose.extra.yml up -d
+# One-time setup after the first start:
+#   bWAPP:      curl "http://127.0.0.1:8085/install.php?install=yes"
+#   Mutillidae: curl "http://127.0.0.1:8084/set-up-database.php"
+#   DVNA:       nothing (the generator registers its own fake users)
+# Then: python lab/generator/generate_traffic.py --site bwapp|mutillidae|dvna
+#       --log-path lab/logs/<site>_access.log ...
+services:
+  nowasp:
+    image: citizenstig/nowasp
+    restart: unless-stopped
+  nginx-mutillidae:
+    image: nginx:stable
+    depends_on: [nowasp]
+    ports: ["127.0.0.1:8084:80"]
+    volumes:
+      - ./nginx/nginx-mutillidae.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
+  bwapp:
+    image: raesene/bwapp
+    restart: unless-stopped
+  nginx-bwapp:
+    image: nginx:stable
+    depends_on: [bwapp]
+    ports: ["127.0.0.1:8085:80"]
+    volumes:
+      - ./nginx/nginx-bwapp.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
+  dvna:
+    image: appsecco/dvna:sqlite
+    restart: unless-stopped
+  nginx-dvna:
+    image: nginx:stable
+    depends_on: [dvna]
+    ports: ["127.0.0.1:8086:80"]
+    volumes:
+      - ./nginx/nginx-dvna.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
+  # API sites (REST and GraphQL)
+  vampi:
+    image: erev0s/vampi
+    restart: unless-stopped
+    environment: ["vulnerable=1", "tokentimetolive=3600"]
+  nginx-vampi:
+    image: nginx:stable
+    depends_on: [vampi]
+    ports: ["127.0.0.1:8087:80"]
+    volumes:
+      - ./nginx/nginx-vampi.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx
+  dvga:
+    image: dolevf/dvga
+    restart: unless-stopped
+    environment: ["WEB_HOST=0.0.0.0"]
+  nginx-dvga:
+    image: nginx:stable
+    depends_on: [dvga]
+    ports: ["127.0.0.1:8088:80"]
+    volumes:
+      - ./nginx/nginx-dvga.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/var/log/nginx

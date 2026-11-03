@@ -21,11 +21,14 @@ from ml.defense import FixFinder, add_defense, load_block_rules
 from ml.detector import MODEL_PATH, served_files, to_frame
 from ml.next_step import NextStepModel, add_next_steps, merge_steps
 from ml.outliers import unusual_requests
+from ml.context_model import load_context_model
 from ml.sessions import analyze_sessions
 from ml.stage import add_stages
 
 PAYLOAD_TYPES = TYPES                      # sqli, xss, traversal, cmdi + the newer families
-DETECTORS = ["rules", "rules + sessions", "model", "model + sessions"]
+# "model + sessions" is the system: payload model + learned behaviour model (ml/context_model.py).
+# The two "rule sessions" rows are baselines with the hand-written session thresholds.
+DETECTORS = ["rules", "rules + rule sessions", "model", "model + rule sessions", "model + sessions"]
 TOOL_IP = "172.19.0.7"      # the tools container in the lab; every other IP in a tool log is a normal visitor
 
 
@@ -53,18 +56,22 @@ def _pipeline(df, drop_body=False):
         df["body"] = ""
     detector, type_model = joblib.load(MODEL_PATH), load_type_model()
     X = to_frame(df["method"], df["path"], df["body"])
-    df["pred"] = detector.predict(X)
+    df["proba"] = detector.predict_proba(X)[:, 1]
+    df["pred"] = (df["proba"] >= 0.5).astype(int)
     served = served_files(df, X, df["pred"])
     df.loc[served, "pred"] = 0
     df["unusual"] = unusual_requests(X) | served
     df["rules"] = rule_predict(df["method"], df["path"], df["body"])
     df["_key"] = range(len(df))                     # to line up the two session runs
-    sessions, req = analyze_sessions(df)
+    sessions, req = analyze_sessions(df, load_context_model())
     req["model"] = req["pred"]
     req["model + sessions"] = (req["pred"] | req["session_attack"]).astype(int)
-    # Baseline with the same session layer, so the table shows what the model itself adds.
-    _, by_rules = analyze_sessions(df.assign(pred=df["rules"]))
-    req["rules + sessions"] = (req["rules"] | req["_key"].map(by_rules.set_index("_key")["session_attack"])).astype(int)
+    # Baselines: the hand-written session thresholds, after the model and after the payload rules.
+    by_key = lambda r: req["_key"].map(r.set_index("_key")["session_attack"])
+    _, rule_sessions = analyze_sessions(df)
+    req["model + rule sessions"] = (req["pred"] | by_key(rule_sessions)).astype(int)
+    _, by_rules = analyze_sessions(df.assign(pred=df["rules"], proba=df["rules"].astype(float)))
+    req["rules + rule sessions"] = (req["rules"] | by_key(by_rules)).astype(int)
 
     flagged = req["pred"] == 1
     req["type_pred"] = ""

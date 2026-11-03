@@ -13,6 +13,7 @@ import math
 import re
 from collections import Counter
 from urllib.parse import urlsplit, parse_qsl, unquote
+from ml import graphql
 
 # ---------- keyword families (lowercase) ----------
 SQL_WORDS = ["select", "union", "insert", "update", "delete", "drop", "sleep(",
@@ -277,7 +278,10 @@ def user_values(url, body=""):
     # whole part is what the user typed, so it is a value too (parse_qsl reads it as a name).
     vals += [unquote(part.replace("+", " "), encoding="latin-1") for part in query.split("&") if part and "=" not in part]
     b = body.strip()
-    if b:
+    gql = graphql.values(b) if b else None
+    if gql is not None:                 # GraphQL: the argument values, not the query's syntax
+        vals += gql
+    elif b:
         try:
             leaves = []
             _json_leaves(_json.loads(b), leaves)
@@ -309,6 +313,9 @@ _TAUTOLOGY = re.compile(r"(?:\b(?:or|and|xor|where|having)\b|['\")]|\|\||&&)\s*"
 def raw_input_text(url, body=""):
     """Query string and body, decoded, names included (for the newer families)."""
     url = str(url or "")
+    gql = graphql.parse(body)
+    if gql is not None:
+        body = "\n".join(f"{n}={v}" for n, v in graphql.arguments(gql))
     return (_dec(url.split("?", 1)[1] if "?" in url else "") + "\n" + _dec(body)).lower()
 
 
@@ -324,11 +331,23 @@ def new_family_hits(url, body=""):
     return {fam: sum(bool(p.search(whole)) for p in pats) for fam, pats in _NEW_COMPILED.items()}
 
 
+# A REST API puts what the user typed into the address itself (/users/v1/<name>). A path
+# segment counts as a value only when it holds a character that acts as code (a quote,
+# a bracket, an operator); route words, file names, numbers, spaces and non-Latin
+# letters ("products", "main.js", "42", "my doc.pdf", Persian names) never count.
+_CODE_CHARS = set("'\"<>();|`{}$*=,\\")
+
+
+def path_values(url):
+    path = str(url or "").split("?", 1)[0]
+    return [d for d in (_dec(seg) for seg in path.split("/")) if d and _CODE_CHARS & set(d)]
+
+
 def value_features(method, url, body="", user_agent=""):
     """Site-independent numeric features for one request (see note above)."""
     url = str(url or "")
     path = _dec(url.split("?", 1)[0])
-    vals = user_values(url, body)
+    vals = user_values(url, body) + path_values(url)
     text = "\n".join(vals)
     low = text.lower()
     raw = url + " " + str(body or "")
@@ -374,7 +393,7 @@ def value_features(method, url, body="", user_agent=""):
     for fam, n in new_family_counts(url, body).items():
         f["v_kw_" + fam] = n
     f["v_kw_total"] = (f["v_kw_sql"] + f["v_kw_xss"] + f["v_kw_trav"] + f["v_kw_cmd"]
-                       + f["p_kw_trav"] + f["p_kw_xss"] + f["p_probe_ext"] + f["p_probe_path"]
+                       + f["p_kw_trav"] + f["p_kw_xss"] + f["p_probe_path"]
                        + sum(f["v_kw_" + fam] for fam in _NEW_RE))
     f["scanner_agent"] = int(any(a in (user_agent or "").lower() for a in SCANNER_AGENTS))
     return f

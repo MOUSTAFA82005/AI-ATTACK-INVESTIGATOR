@@ -5,25 +5,21 @@ The detector only says attack / normal. For an investigation we also want the
 kind: sqli, xss, traversal, cmdi, the newer families (ssrf, xxe, ssti, nosql,
 log4shell, ldap, xpath), or scan (a probe for a hidden file).
 
-Two parts:
-1) Rules: for each attack family, count how many of its patterns (the same
-   regular expressions as in features.py) match the user values and the path.
-   The family with the most matching patterns wins. Easy to explain.
-2) A small model for the cases the rules cannot decide (no pattern matches,
-   or two families tie). It is trained on the HttpParams attack types and the
-   public payloads of the newer families (ml/new_families.py), not on our
-   generator, so it does not learn the generator.
-   Train it with: python -m ml.train_attack_type
-   If models/attack_type.joblib is missing, ties use a fixed order instead.
+The model decides (models/attack_type.joblib, python -m ml.train_attack_type).
+Its input is the detector's value features plus, per family, how many of that
+family's patterns match (rule_scores): the patterns are descriptions, the model
+learns how much each one counts. It is trained on public data only (HttpParams,
+ECML/PKDD 2007, public payloads of the newer families, a real ffuf scan), never on
+our generator, so the lab runs stay a fair test.
 
-Domain rules, applied before the counts: a Log4j lookup (${jndi:ldap://...}) is
-log4shell even though it also holds a URL; an XML DOCTYPE/ENTITY is xxe even though
-it also names a file or URL; a template tag that runs a command is ssti, not cmdi.
-And in a tie, cmdi beats traversal ("; cat /etc/passwd": a shell command reads the file).
+rule_types() is the older hand-written decision (the family with the most matching
+patterns wins, a few domain rules, the model only for ties). It is kept as the
+baseline, and used when no model file exists.
 
-See notebooks/08_attack_type.ipynb.
+See notebooks/08_attack_type.ipynb and notebooks/20_learned_models.ipynb.
 """
 import joblib
+import pandas as pd
 
 from ml.detector import ROOT, to_frame
 from ml.features import _COMPILED, _TAUTOLOGY, _dec, new_family_hits, user_values, value_features
@@ -31,6 +27,7 @@ from ml.features import _COMPILED, _TAUTOLOGY, _dec, new_family_hits, user_value
 OLD_TYPES = ["sqli", "xss", "traversal", "cmdi"]
 NEW_TYPES = ["ssrf", "xxe", "ssti", "nosql", "log4shell", "ldap", "xpath"]
 TYPES = OLD_TYPES + NEW_TYPES
+CLASSES = TYPES + ["scan"]                          # what the model can answer
 TYPE_MODEL_PATH = ROOT / "models" / "attack_type.joblib"
 _FAMILY = {"sql": "sqli", "xss": "xss", "trav": "traversal", "cmd": "cmdi"}
 _NEW_FAMILY = {"log4j": "log4shell"}               # feature name -> type name
@@ -83,13 +80,29 @@ def load_type_model():
     return joblib.load(TYPE_MODEL_PATH) if TYPE_MODEL_PATH.exists() else None
 
 
+def type_features(methods, paths, bodies):
+    """Model input: the detector's value features + pattern counts per family."""
+    X = to_frame(methods, paths, bodies).drop(columns="text").reset_index(drop=True)
+    S = pd.DataFrame([rule_scores(m, p, b) for m, p, b in zip(methods, paths, bodies)]).add_prefix("rule_")
+    return pd.concat([X, S], axis=1)
+
+
 def attack_types(methods, paths, bodies, model=None):
-    """One type per request. Call it only for requests flagged as attacks."""
+    """One type per request. Call it only for requests flagged as attacks.
+    With the trained model, the model decides; without it, rule_types()."""
     methods, paths, bodies = list(methods), list(paths), list(bodies)
     if not paths:
         return []
+    if model is not None and getattr(model, "n_classes_", None) == len(CLASSES):
+        return [CLASSES[i] for i in model.predict(type_features(methods, paths, bodies))]
+    return rule_types(methods, paths, bodies, model)
+
+
+def rule_types(methods, paths, bodies, model=None):
+    """Baseline: the family with the most matching patterns; a tie-break model if given."""
+    methods, paths, bodies = list(methods), list(paths), list(bodies)
     probas = [None] * len(paths)
-    if model is not None:
+    if model is not None and getattr(model, "n_classes_", None) == len(TYPES):
         X = to_frame(methods, paths, bodies).drop(columns="text")
         probas = model.predict_proba(X)
     return [_pick(rule_scores(m, p, b), pr) for m, p, b, pr in zip(methods, paths, bodies, probas)]

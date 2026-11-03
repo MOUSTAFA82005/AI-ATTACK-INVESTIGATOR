@@ -66,6 +66,11 @@ import requests
 ALLOWED_BASES = {
     "juiceshop": "http://127.0.0.1:8080",
     "dvwa": "http://127.0.0.1:8081",
+    "mutillidae": "http://127.0.0.1:8084",
+    "bwapp": "http://127.0.0.1:8085",
+    "dvna": "http://127.0.0.1:8086",
+    "vampi": "http://127.0.0.1:8087",
+    "dvga": "http://127.0.0.1:8088",
 }
 BASE_SITES = dict(ALLOWED_BASES)
 if BASE_SITES != ALLOWED_BASES:
@@ -387,6 +392,80 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+# ---------- true attack stage, read from the server's full answer ----------
+# The access log only shows status and size. The generator sees the whole answer,
+# so it can say whether an attack really worked. This is the ground truth the
+# stage model (ml/stage.py) learns from; the model itself only sees the log.
+#   recon        looking around (scans, IDs that are not there)
+#   intrusion    trying to get in, and it did not work
+#   exploitation it worked (the payload's effect is in the answer, or a guessed login succeeded)
+#   data_theft   records were read (an enumerated ID that exists and came back with data)
+_LEAK_MARKERS = ("root:x:0:0", "daemon:x:", "uid=", "[boot loader]", "[extensions]",
+                 "bytes from", "PING ", "Linux version")
+_HASH_RE = re.compile(r"\b[a-f0-9]{32}\b")
+
+
+def _request_values(resp):
+    url = urllib.parse.unquote_plus(resp.request.url or "")
+    body = resp.request.body or ""
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    return url + "\n" + urllib.parse.unquote_plus(body)
+
+
+def _site_of(resp):
+    port = urllib.parse.urlsplit(resp.request.url).port
+    return next((site for site, p in EXTRA_PORTS.items() if p == port), None) if "EXTRA_PORTS" in globals() else None
+
+
+def _payload_worked(resp, attack_type):
+    text = resp.text if resp.content and len(resp.content) < 2_000_000 else ""
+    if not (200 <= resp.status_code < 300) or not text:
+        return False
+    sent = _request_values(resp)
+    if any(m in text and m not in sent for m in _LEAK_MARKERS):
+        return True                                    # a file or command output came back
+    site = _site_of(resp)
+    if attack_type == "sqli" and site:
+        return SITE_SPECS[site]["sqli_worked"](text)
+    if attack_type == "ssti" and site == "dvna":
+        return "49" in text and "7*7" in sent
+    if attack_type == "sqli":
+        return ('"authentication"' in text                       # login bypass: a token came back
+                or text.count("First name:") >= 2                # DVWA: more than the one asked row
+                or len(set(_HASH_RE.findall(text)) - set(_HASH_RE.findall(sent))) >= 2)   # password hashes
+    if attack_type == "xss" and "json" in resp.headers.get("Content-Type", ""):
+        return False                  # an API answer is data, not a page: no browser runs it
+    if attack_type == "xss":
+        # the script part came back unchanged (reflected or stored), so a browser would run it
+        parts = re.findall(r"<\s*(?:script|img|svg|iframe|body)[^>]*>|on\w+\s*=|javascript:", sent, re.I)
+        return any(p in text for p in parts)
+    if attack_type == "ssti":
+        return "49" in text and "7*7" in sent and "7*7" not in text
+    return False
+
+
+def true_stage(resp, label, attack_type):
+    if label != "attack":
+        return ""
+    if attack_type == "scan":
+        return "recon"
+    ok = 200 <= resp.status_code < 300
+    text = resp.text if ok and resp.content and len(resp.content) < 2_000_000 else ""
+    site = _site_of(resp)
+    if attack_type == "enum" and site:
+        return "data_theft" if ok and SITE_SPECS[site]["enum_found"](text) else "recon"
+    if attack_type == "bruteforce" and site:
+        return "exploitation" if SITE_SPECS[site]["login_won"](resp) else "intrusion"
+    if attack_type == "enum":
+        got = ok and ("First name:" in text or re.search(r'"data"\s*:\s*[\[{]', text) is not None)
+        return "data_theft" if got else "recon"
+    if attack_type == "bruteforce":
+        won = ok and ('"authentication"' in text or "Welcome to the password protected area" in text)
+        return "exploitation" if won else "intrusion"
+    return "exploitation" if _payload_worked(resp, attack_type) else "intrusion"
+
+
 # ---------- per-request logging (thread-safe: sessions run concurrently) ----------
 class RequestLog:
     def __init__(self):
@@ -395,9 +474,9 @@ class RequestLog:
         self.attack_counts = Counter()  # (attack_type, variant, site) -> count
         self._lock = threading.Lock()
 
-    def record(self, ip, method, path, label, attack_type, variant, site):
+    def record(self, ip, method, path, label, attack_type, variant, site, stage=""):
         with self._lock:
-            self.rows.append([now_iso(), ip, method, path, label, attack_type, variant, site])
+            self.rows.append([now_iso(), ip, method, path, label, attack_type, variant, site, stage])
             if label == "attack":
                 self.attack_counts[(attack_type, variant, site)] += 1
 
@@ -405,7 +484,8 @@ class RequestLog:
         with self._lock:
             self.status_counts[resp.status_code] += 1
         path = urllib.parse.urlsplit(resp.request.url).path
-        self.record(ip, resp.request.method, path, label, attack_type, variant, site)
+        stage = true_stage(resp, label, attack_type)
+        self.record(ip, resp.request.method, path, label, attack_type, variant, site, stage)
 
     def log_error(self):
         with self._lock:
@@ -415,7 +495,7 @@ class RequestLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["time", "ip", "method", "path", "label", "attack_type", "variant", "site"])
+            w.writerow(["time", "ip", "method", "path", "label", "attack_type", "variant", "site", "stage"])
             w.writerows(self.rows)
 
 
@@ -427,7 +507,7 @@ def send(reqlog, s, ip, method, url, label, attack_type, variant="", site="juice
     kwargs.setdefault("allow_redirects", False)
     for attempt in (1, 2):
         try:
-            resp = s.request(method, url, timeout=5, **kwargs)
+            resp = s.request(method, url, timeout=10, **kwargs)
             reqlog.log_response(resp, ip, label, attack_type, variant, site)
             return resp
         except requests.RequestException as e:
@@ -683,7 +763,8 @@ def run_campaign(ip, reqlog, steps, runners):
     _campaign.session.headers.update({"X-Forwarded-For": ip, "User-Agent": random.choice(BROWSER_UAS)})
     try:
         for i, step in enumerate(steps):
-            s_start, end = runners[step](ip, reqlog)
+            run_step = runners.get(step) or runners["scan"]     # a site with no ID page: no enum step
+            s_start, end = run_step(ip, reqlog)
             start = start or s_start
             if i < len(steps) - 1:
                 pause()
@@ -1127,6 +1208,366 @@ def add_new_family_runners():
         ATTACK_RUNNERS_DVWA[family] = make_new_family_runner(family, "dvwa")
 
 
+# ============================================================
+# Extra sites (generator v6): bWAPP, Mutillidae, DVNA
+# ============================================================
+# Three more vulnerable apps, so the models can be tested on a site they never
+# saw (leave one site out). Each site is described by a spec: how a user logs in,
+# which pages a visitor opens, and which inputs exist; the same runners then send
+# normal visits and every kind of attack to any site. Lab addresses only.
+# Success markers (true_stage) come from looking at each app's real answers.
+def _rows(text, tag="<tr"):
+    return text.count(tag)
+
+
+SITE_SPECS = {
+    "bwapp": {
+        "login": ("POST", "/login.php", lambda acc: {"login": acc[0], "password": acc[1],
+                                                   "security_level": "0", "form": "submit"}),
+        "accounts": [("bee", "bug")],
+        "pages": ["/portal.php", "/info.php", "/training.php", "/credits.php", "/aim.php", "/user_extra.php"],
+        "missing": ["/old_portal.php", "/report.php", "/movies.php"],
+        "inputs": {
+            "movie_search": ("GET", "/sqli_1.php", "title", {"action": "search"}, "words"),
+            "names": ("GET", "/xss_get.php", "firstname", {"lastname": "Smith", "form": "submit"}, "names"),
+            "language": ("GET", "/rlfi.php", "language", {"action": "go"}, ["lang_en.php", "lang_fr.php", "lang_nl.php"]),
+            "dns": ("POST", "/commandi.php", "target", {"form": "submit"}, "hosts"),
+        },
+        "attack_inputs": {"sqli": ["movie_search"], "xss": ["names", "movie_search"], "traversal": ["language"],
+                          "cmdi": ["dns"], "new": ["movie_search", "names", "dns"]},
+        "bruteforce": ("POST", "/login.php", "login", "password", {"security_level": "0", "form": "submit"},
+                       ["bee", "A.I.M.", "admin"]),
+        "enum": ("GET", "/sqli_2.php", "movie", {"action": "go"}),
+        "sqli_worked": lambda t: _rows(t) >= 12 or re.search(r"\b[a-f0-9]{40}\b", t) is not None,
+        "enum_found": lambda t: re.search(r"<td>[A-Z][^<]{2,}</td>", t) is not None,
+        "login_won": lambda r: r.status_code in (301, 302) and "portal.php" in r.headers.get("Location", ""),
+    },
+    "mutillidae": {
+        "login": ("POST", "/index.php?page=login.php",
+                  lambda acc: {"username": acc[0], "password": acc[1], "login-php-submit-button": "Login"}),
+        "accounts": [("admin", "adminpass"), ("adrian", "somepassword"), ("john", "monkey"),
+                     ("jeremy", "password"), ("bryce", "password")],
+        "pages": ["/index.php?page=home.php", "/index.php?page=browser-info.php", "/index.php?page=user-poll.php",
+                  "/index.php?page=text-file-viewer.php", "/index.php?page=add-to-your-blog.php",
+                  "/index.php?page=site-footer-xss-discussion.php"],
+        "missing": ["/old.php", "/index.php?page=report.php", "/backup/"],
+        "inputs": {
+            "user_info": ("GET", "/index.php", "username", {"page": "user-info.php", "password": "{password}",
+                                                          "user-info-php-submit-button": "View Account Details"}, "names"),
+            "dns": ("POST", "/index.php?page=dns-lookup.php", "target_host",
+                    {"dns-lookup-php-submit-button": "Lookup DNS"}, "hosts"),
+            "page": ("GET", "/index.php", "page", {}, ["home.php", "browser-info.php", "user-poll.php",
+                                                      "text-file-viewer.php", "dns-lookup.php"]),
+        },
+        "attack_inputs": {"sqli": ["user_info"], "xss": ["dns", "user_info"], "traversal": ["page"],
+                          "cmdi": ["dns"], "new": ["user_info", "dns"]},
+        "bruteforce": ("POST", "/index.php?page=login.php", "username", "password",
+                       {"login-php-submit-button": "Login"}, ["admin", "adrian", "john", "jeremy"]),
+        "enum": None,
+        "sqli_worked": lambda t: any(int(n) >= 2 for n in re.findall(r"(\d+) records found", t)),
+        "login_won": lambda r: r.status_code in (301, 302),
+    },
+    "dvna": {
+        "register": True,
+        "login": ("POST", "/login", lambda acc: {"username": acc[0], "password": acc[1]}),
+        "accounts": [],
+        "pages": ["/learn", "/app/products", "/app/usersearch", "/app/ping", "/app/calc",
+                  "/learn/vulnerability/a1_injection", "/learn/vulnerability/a7_xss"],
+        "missing": ["/app/orders", "/app/report", "/old"],
+        "inputs": {
+            "usersearch": ("POST", "/app/usersearch", "login", {}, "names"),
+            "products": ("POST", "/app/products", "name", {}, "words"),
+            "ping": ("POST", "/app/ping", "address", {}, "hosts"),
+            "redirect": ("GET", "/app/redirect", "url", {}, ["/learn", "/app/products", "/app/ping"]),
+        },
+        "attack_inputs": {"sqli": ["usersearch"], "xss": ["products", "usersearch"], "traversal": ["redirect"],
+                          "cmdi": ["ping"], "new": ["products", "usersearch", "ping"]},
+        "bruteforce": ("POST", "/login", "username", "password", {}, None),
+        "enum": None,
+        "sqli_worked": lambda t: "Search Result" in t,
+        "login_won": lambda r: r.status_code in (301, 302) and "/learn" in r.headers.get("Location", ""),
+    },
+    # ---- API sites: every request is JSON (REST) or one GraphQL endpoint ----
+    # Input kinds beyond GET/POST forms: "JSON" (POST, JSON body), "PATH" (GET, the value
+    # is a path segment: path has {v}), "GQL" (POST /graphql, the value goes into a string
+    # argument of the query template in place of {v}).
+    "vampi": {
+        "login": ("JSON", "/users/v1/login", lambda acc: {"username": acc[0], "password": acc[1]}),
+        "accounts": [("name1", "pass1"), ("name2", "pass2")],
+        "pages": ["/", "/users/v1", "/books/v1"],
+        "missing": ["/api/v2/users", "/admin", "/users/v2"],
+        "inputs": {
+            "user": ("PATH", "/users/v1/{v}", None, {}, ["name1", "name2", "admin"]),
+            "book": ("PATH", "/books/v1/{v}", None, {}, "books"),
+            "add_book": ("JSON", "/books/v1", "book_title", {"secret": "my notes"}, "books"),
+            "register": ("JSON", "/users/v1/register", "username", {"password": "{password}", "email": "lab@example-lab.test"}, "names"),
+        },
+        "attack_inputs": {"sqli": ["user"], "xss": ["add_book", "register"], "traversal": ["book"],
+                          "cmdi": ["user", "add_book"], "new": ["add_book", "register", "user"]},
+        "bruteforce": ("JSON", "/users/v1/login", "username", "password", {}, ["admin", "name1", "name2"]),
+        "enum": ("PATH", "/books/v1/bookTitle{v}", None, {}),
+        "sqli_worked": lambda t: '"email"' in t,
+        "enum_found": lambda t: '"secret"' in t,
+        "login_won": lambda r: "auth_token" in r.text,
+    },
+    "dvga": {
+        "login": ("GQL", "/graphql", lambda acc: 'mutation { login(username:"%s", password:"%s") { accessToken } }' % acc),
+        "accounts": [("admin", "changeme"), ("operator", "password123")],
+        "pages": ["/", "/public_pastes", "/about"],
+        "missing": ["/admin", "/graphiql", "/api"],
+        "inputs": {
+            "search": ("GQL", "/graphql", 'query { pastes(filter:"{v}") { id title content } }', {}, "words"),
+            "create": ("GQL", "/graphql", 'mutation { createPaste(title:"Note", content:"{v}", public:true) { paste { id } } }', {}, "names"),
+            "import": ("GQL", "/graphql", 'mutation { importPaste(host:"127.0.0.1", port:80, path:"{v}", scheme:"http") { result } }', {}, ["/", "/about", "/public_pastes"]),
+            "owner": ("GQL", "/graphql", 'query { pastes(filter:"{v}") { id owner { name } } }', {}, "names"),
+        },
+        "attack_inputs": {"sqli": ["search", "owner"], "xss": ["create"], "traversal": ["import"],
+                          "cmdi": ["import"], "new": ["search", "create", "import"]},
+        "bruteforce": ("GQL", "/graphql", None, None, 'mutation { login(username:"{u}", password:"{p}") { accessToken } }', ["admin", "operator"]),
+        "enum": ("GQL", "/graphql", 'query { paste(id: {v}) { id title content } }', {}),
+        "sqli_worked": lambda t: t.count('"id"') >= 6,
+        "enum_found": lambda t: '"paste":{' in t.replace(" ", ""),
+        "login_won": lambda r: '"accessToken":"' in r.text.replace(" ", ""),
+    },
+}
+EXTRA_SITES = list(SITE_SPECS)
+ATTACK_PREFIX = {"mutillidae": {"dns": "127.0.0.1"}, "dvna": {"ping": "127.0.0.1"}, "dvga": {"import": "/"}}
+EXTRA_PORTS = {"mutillidae": 8084, "bwapp": 8085, "dvna": 8086, "vampi": 8087, "dvga": 8088}
+VAMPI_BOOKS = ["bookTitle" + str(n) for n in range(1, 100)]
+
+
+def _gql_string(value):
+    """A value inside a GraphQL string argument, escaped as a client library would."""
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _api_request(method, path, param, extra, value):
+    """(HTTP method, path, requests kwargs) for one input of any kind."""
+    if method == "PATH":
+        return "GET", path.replace("{v}", urllib.parse.quote(str(value), safe="")), {}
+    if method == "GQL":
+        return "POST", path, {"json": {"query": param.replace("{v}", _gql_string(value))}}
+    fields = dict(extra)
+    if param:
+        fields[param] = value
+    if method == "JSON":
+        return "POST", path, {"json": fields}
+    return method, path, ({"params": fields} if method == "GET" else {"data": fields})
+
+
+def _keep_token(s, resp):
+    """API login: later requests carry the token, as the site's own client does."""
+    try:
+        data = resp.json()
+    except Exception:
+        return
+    token = data.get("auth_token") or ((data.get("data") or {}).get("login") or {}).get("accessToken")
+    if token:
+        s.headers["Authorization"] = "Bearer " + token
+NORMAL_HOSTS = ["127.0.0.1", "localhost", "example.com", "lab.local", "8.8.8.8", "intranet"]
+_extra_site = threading.local()          # which extra site the current thread works on
+
+
+def _spec_value(kind):
+    if isinstance(kind, list):
+        return random.choice(kind)
+    roll = random.random()
+    if kind == "hosts":
+        return random.choice(NORMAL_HOSTS)
+    if kind == "books":
+        return random.choice(VAMPI_BOOKS[:60])
+    if kind == "names":
+        return random.choice(HARD_NORMAL_NAMES) if roll < 0.8 else random.choice(HARD_NORMAL_PHRASES)
+    return random.choice(PRODUCT_TERMS) if roll < 0.7 else random.choice(HARD_NORMAL_PHRASES)
+
+
+def _spec_send(reqlog, s, ip, site, name, value, label, attack_type, variant="", account=None):
+    spec = SITE_SPECS[site]
+    method, path, param, extra, _ = spec["inputs"][name]
+    fields = {k: v.replace("{password}", (account or ("x", fake_password()))[1]) for k, v in extra.items()}
+    # A shell input (DNS lookup, ping) gets a real host before the payload, as a real
+    # attacker sends it: an empty host makes the tool wait for input and the request hangs.
+    if label == "attack" and name in ATTACK_PREFIX.get(site, {}):
+        value = ATTACK_PREFIX[site][name] + value
+    if method in ("JSON", "PATH", "GQL"):
+        http, p, kw = _api_request(method, path, param, fields, value)
+        return send(reqlog, s, ip, http, BASE_SITES[site] + p, label, attack_type, variant, site=site, **kw)
+    fields[param] = value
+    url = BASE_SITES[site] + path
+    kw = {"params": fields} if method == "GET" else {"data": fields}
+    return send(reqlog, s, ip, method, url, label, attack_type, variant, site=site, **kw)
+
+
+def _spec_login(reqlog, s, ip, site):
+    """Log in as an ordinary user (DVNA: register a new fake account first). Returns the account."""
+    spec = SITE_SPECS[site]
+    base = BASE_SITES[site]
+    if getattr(s, "spec_account", None):        # already logged in (campaign: one login for all steps)
+        return s.spec_account
+    if spec.get("register"):
+        user = "u" + "".join(random.choices(string.digits, k=7))
+        acc = (user, fake_password())
+        send(reqlog, s, ip, "POST", base + "/register", "normal", "", site=site,
+             data={"name": "Lab " + user, "username": acc[0], "email": user + "@example-lab.test",
+                   "password": acc[1], "cpassword": acc[1]})
+        pause()
+    else:
+        acc = random.choice(spec["accounts"])
+    method, path, fields = spec["login"]
+    if method == "GQL":
+        r = send(reqlog, s, ip, "POST", base + path, "normal", "", site=site, json={"query": fields(acc)})
+    elif method == "JSON":
+        r = send(reqlog, s, ip, "POST", base + path, "normal", "", site=site, json=fields(acc))
+    else:
+        r = send(reqlog, s, ip, method, base + path, "normal", "", site=site, data=fields(acc))
+    if r is not None:
+        _keep_token(s, r)
+    s.spec_account = acc
+    return acc
+
+
+def _enum_request(spec, i):
+    method, path, param, extra = spec["enum"]
+    if method in ("PATH", "GQL"):
+        return _api_request(method, path, param, extra, i)
+    return method, path, {"params": {param: i, **extra}}
+
+
+def _make_extra_normal(site):
+    def run(ip, reqlog):
+        spec = SITE_SPECS[site]
+        s = session_http(ip)
+        start = now_iso()
+        acc = _spec_login(reqlog, s, ip, site)
+        pause()
+        for page in random.sample(spec["pages"], k=min(len(spec["pages"]), random.randint(2, 4))):
+            send(reqlog, s, ip, "GET", BASE_SITES[site] + page, "normal", "", site=site)
+            pause()
+        if random.random() < 0.15:
+            send(reqlog, s, ip, "GET", BASE_SITES[site] + random.choice(spec["missing"]), "normal", "", site=site)
+            pause()
+        for _ in range(random.randint(2, 4)):
+            name = random.choice(list(spec["inputs"]))
+            value = _spec_value(spec["inputs"][name][4])
+            if name == "user_info":
+                value = acc[0]
+            _spec_send(reqlog, s, ip, site, name, value, "normal", "", account=acc)
+            pause()
+        if spec["enum"] and random.random() < 0.5:
+            for i in random.sample(range(1, 11), k=random.randint(1, 3)):
+                http, p, kw = _enum_request(spec, i)
+                send(reqlog, s, ip, http, BASE_SITES[site] + p, "normal", "", site=site, **kw)
+                pause()
+        return start, now_iso()
+    return run
+
+
+def _make_extra_payload_runner(site, attack_type, payloads_of):
+    def run(ip, reqlog):
+        spec = SITE_SPECS[site]
+        s = session_http(ip, ATTACK_UAS.get(attack_type) or random.choice(BROWSER_UAS))
+        start = now_iso()
+        acc = _spec_login(reqlog, s, ip, site)
+        pause()
+        targets = spec["attack_inputs"].get(attack_type) or spec["attack_inputs"]["new"]
+        cover = random.choice(targets)
+        _spec_send(reqlog, s, ip, site, cover, _spec_value(spec["inputs"][cover][4]), "normal", "", account=acc)
+        pause()
+        payloads = payloads_of()
+        for payload in random.sample(payloads, k=min(len(payloads), random.randint(4, 8))):
+            if attack_type in NEW_FAMILIES:
+                p, v = vary_new(attack_type, payload), new_family_variant(attack_type, payload)
+            elif attack_type == "traversal":
+                p, v = payload, payload_variant("traversal", payload)
+            else:
+                p, v = vary(payload), payload_variant(attack_type, payload)
+            _spec_send(reqlog, s, ip, site, random.choice(targets), p, "attack", attack_type, v, account=acc)
+            pause()
+        return start, now_iso()
+    return run
+
+
+def _make_extra_bruteforce(site):
+    def run(ip, reqlog):
+        spec = SITE_SPECS[site]
+        method, path, ufield, pfield, extra, users = spec["bruteforce"]
+
+        def attempt(user, password):
+            if method == "GQL":
+                q = extra.replace("{u}", _gql_string(user)).replace("{p}", _gql_string(password))
+                return {"json": {"query": q}}
+            if method == "JSON":
+                return {"json": {ufield: user, pfield: password}}
+            return {"data": {ufield: user, pfield: password, **extra}}
+        http = "POST" if method in ("JSON", "GQL") else method
+        variant = random.choices(["fast", "slow", "spray"], weights=[50, 25, 25])[0]
+        s = session_http(ip, ATTACK_UAS["bruteforce"])
+        start = now_iso()
+        users = users or ["admin", "labuser", "root", "test"]
+        url = BASE_SITES[site] + path
+        if variant in ("fast", "slow"):
+            target = users[0]
+            for _ in range(random.randint(6, 12) if variant == "fast" else random.randint(3, 5)):
+                send(reqlog, s, ip, http, url, "attack", "bruteforce", variant, site=site,
+                     **attempt(target, fake_password()))
+                time.sleep(random.uniform(5, 20)) if variant == "slow" else pause()
+        else:
+            passwords = [fake_password() for _ in range(random.randint(1, 2))]
+            for victim in random.sample(users, k=min(len(users), random.randint(2, 4))):
+                for _ in range(random.randint(2, 4)):
+                    send(reqlog, s, ip, http, url, "attack", "bruteforce", variant, site=site,
+                         **attempt(victim, random.choice(passwords)))
+                    pause()
+        return start, now_iso()
+    return run
+
+
+def _make_extra_scan(site):
+    def run(ip, reqlog):
+        s = session_http(ip, ATTACK_UAS["scan"])
+        start = now_iso()
+        for path in random.sample(SCAN_PATHS, k=min(len(SCAN_PATHS), random.randint(15, 25))):
+            send(reqlog, s, ip, "GET", BASE_SITES[site] + "/" + path.lstrip("/"), "attack", "scan", site=site)
+            quick_pause()
+        return start, now_iso()
+    return run
+
+
+def _make_extra_enum(site):
+    def run(ip, reqlog):
+        method, path, param, extra = SITE_SPECS[site]["enum"]
+        s = session_http(ip, random.choice(BROWSER_UAS))
+        start = now_iso()
+        _spec_login(reqlog, s, ip, site)
+        pause()
+        n = random.randint(15, 30)
+        ids = list(range(1, n + 1)) if random.random() < 0.5 else random.sample(range(1, 500), k=n)
+        for i in ids:
+            http, p, kw = _enum_request(SITE_SPECS[site], i)
+            send(reqlog, s, ip, http, BASE_SITES[site] + p, "attack", "enum", site=site, **kw)
+            quick_pause()
+        return start, now_iso()
+    return run
+
+
+def extra_site_runners(site, families_all):
+    """(normal runner, attack runners) for one extra site."""
+    runners = {
+        "sqli": _make_extra_payload_runner(site, "sqli", lambda: SQLI_PAYLOADS),
+        "xss": _make_extra_payload_runner(site, "xss", lambda: XSS_PAYLOADS),
+        "traversal": _make_extra_payload_runner(site, "traversal", lambda: TRAVERSAL_PAYLOADS),
+        "cmdi": _make_extra_payload_runner(site, "cmdi", lambda: CMDI_PAYLOADS),
+        "bruteforce": _make_extra_bruteforce(site),
+        "scan": _make_extra_scan(site),
+    }
+    if SITE_SPECS[site]["enum"]:
+        runners["enum"] = _make_extra_enum(site)
+    if families_all:
+        for family in NEW_FAMILIES:
+            runners[family] = _make_extra_payload_runner(site, family, lambda f=family: NEW_PAYLOADS[f])
+    return _make_extra_normal(site), runners
+
+
 # ---------- capture new access.log lines produced by this run ----------
 def capture_log_start(log_path):
     if log_path.exists():
@@ -1149,7 +1590,7 @@ def capture_log_end(log_path, start_size, out_path):
 
 def main():
     ap = argparse.ArgumentParser(description="Generate labelled traffic for the lab.")
-    ap.add_argument("--site", choices=["juiceshop", "dvwa"], default="juiceshop",
+    ap.add_argument("--site", choices=["juiceshop", "dvwa"] + EXTRA_SITES, default="juiceshop",
                      help="Which lab site to target.")
     ap.add_argument("--sessions", type=int, default=300)
     ap.add_argument("--seed", type=int, default=0)
@@ -1184,9 +1625,12 @@ def main():
         print(f"dvwa: using 1 worker instead of {args.workers}")
         args.workers = 1
 
+    if args.site in EXTRA_SITES and args.workers > 4:
+        print(f"{args.site}: using 4 workers instead of {args.workers}")
+        args.workers = 4
     if args.log_path is None:
         args.log_path = ("lab/logs/access.log" if args.site == "juiceshop"
-                          else "lab/logs/dvwa_access.log")
+                          else f"lab/logs/{args.site}_access.log")
 
     if args.families == "all":
         add_new_family_runners()
@@ -1204,8 +1648,11 @@ def main():
         log_path = ROOT / log_path
     log_start_size = capture_log_start(log_path)
 
-    normal_runner = run_normal_session if args.site == "juiceshop" else run_normal_session_dvwa
-    attack_runners = ATTACK_RUNNERS if args.site == "juiceshop" else ATTACK_RUNNERS_DVWA
+    if args.site in EXTRA_SITES:
+        normal_runner, attack_runners = extra_site_runners(args.site, args.families == "all")
+    else:
+        normal_runner = run_normal_session if args.site == "juiceshop" else run_normal_session_dvwa
+        attack_runners = ATTACK_RUNNERS if args.site == "juiceshop" else ATTACK_RUNNERS_DVWA
 
     n_attack = int(args.sessions * 0.30)
     n_normal = args.sessions - n_attack

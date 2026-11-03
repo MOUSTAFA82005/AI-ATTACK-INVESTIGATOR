@@ -35,6 +35,7 @@ from urllib.parse import parse_qsl
 import pandas as pd
 
 from ml.features import value_features
+from ml import graphql
 
 SESSION_GAP = pd.Timedelta(minutes=30)   # a new session starts after 30 min of silence
 
@@ -124,6 +125,9 @@ def field_names(path, body=""):
     query = str(path or "").partition("?")[2]
     names = [k for k, _ in parse_qsl(query, keep_blank_values=True)]
     b = str(body or "").strip()
+    gql = graphql.field_names(b)
+    if gql is not None:                 # GraphQL: the query's argument names are its fields
+        return names + gql
     if b.startswith("{"):
         try:
             obj = json.loads(b)
@@ -157,7 +161,7 @@ def add_session_ids(df):
     return d
 
 
-def _one_session(s):
+def _one_session(s, learned=None):
     is_login = s["_login"]
     per_form = s[is_login].groupby("_path0").size()
     failed = is_login & s["status"].isin([401, 403])
@@ -194,9 +198,13 @@ def _one_session(s):
     if n_attacks:
         score += min(60, 15 * n_attacks)
         reasons.append(f"{n_attacks} requests carry an attack payload")
-    if stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= MIN_LOGIN_ATTEMPTS:
+    rule_bf = stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= MIN_LOGIN_ATTEMPTS
+    if learned is not None:          # the context model decided (ml/context_model.py)
+        rule_bf = "bruteforce" in learned
+    if rule_bf:
         behaviours.append("bruteforce")
-        clear = stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= CLEAR_LOGIN_ATTEMPTS
+        clear = (stats["failed_logins"] >= MIN_FAILED_LOGINS or stats["login_attempts"] >= CLEAR_LOGIN_ATTEMPTS
+                 or learned is not None)
         score += 70 if clear else 40
         reasons.append(f"{stats['failed_logins']} failed logins, {stats['login_attempts']} login attempts on {stats['login_form']}"
                        + ("" if clear else " (possible slow brute force, or a user who mistyped)"))
@@ -206,6 +214,8 @@ def _one_session(s):
     missing = stats["not_found"] + stats["soft_not_found"]
     enumerates = stats["max_ids_one_resource"] >= MIN_IDS_PER_RESOURCE
     scans = stats["probes"] >= MIN_PROBES or (missing >= MIN_NOT_FOUND and missing >= MIN_NOT_FOUND_SHARE * len(s))
+    if learned is not None:
+        enumerates, scans, crawler = "enumeration" in learned, "scan" in learned, False
     if crawler and (enumerates or scans):
         score = max(score, 10)          # shown as low risk; never raises a risk the payloads gave
         reasons.append(f"a search-engine crawler by its user agent (can be faked) reading many pages: "
@@ -234,8 +244,12 @@ def _one_session(s):
     return stats
 
 
-def analyze_sessions(df):
+def analyze_sessions(df, context_model=None):
     """
+    context_model: the learned behaviour model (ml/context_model.py). With it, the model
+    decides which requests are brute force / enumeration / scan and the thresholds above
+    are not used; without it, the hand-written rules decide (kept as the baseline).
+
     df: one row per request with columns ip, timestamp, method, path, status,
     and pred (1 if the per-request model called it an attack).
     Returns (sessions DataFrame sorted by risk, request-level DataFrame with a
@@ -249,7 +263,15 @@ def analyze_sessions(df):
     d["_login"] = [is_login_attempt(m, p, b) for m, p, b in zip(d["method"], d["path"], bodies)]
     id_info = d["path"].map(_id_of)
     d["_res"], d["_id"] = id_info.str[0], id_info.str[1]
-    sessions = pd.DataFrame([_one_session(s) | {"session": k} for k, s in d.groupby("session", sort=False)])
+    learned = None
+    if context_model is not None:
+        from ml.context_model import context_features, predict_behaviours
+        X, ordered = context_features(df.assign(proba=df["proba"] if "proba" in df else df["pred"].astype(float)))
+        names, _ = predict_behaviours(context_model, X)
+        d["_learned"] = pd.Series(names, index=ordered.index).reindex(d.index).values
+        learned = d.groupby("session")["_learned"].agg(lambda b: set(b) - {""})
+    sessions = pd.DataFrame([_one_session(s, None if learned is None else learned[k]) | {"session": k}
+                             for k, s in d.groupby("session", sort=False)])
 
     # Mark the requests that make up each detected behaviour.
     flags = sessions.set_index("session")["behaviours"]
@@ -275,8 +297,11 @@ def analyze_sessions(df):
     }
     # `behaviour`: which detected behaviour each request is part of ("" if none).
     d["behaviour"] = ""
-    for name in reversed(list(marks)):               # bruteforce wins over enumeration over scan
-        d.loc[marks[name], "behaviour"] = name
+    if learned is not None:
+        d["behaviour"] = d.pop("_learned")
+    else:
+        for name in reversed(list(marks)):           # bruteforce wins over enumeration over scan
+            d.loc[marks[name], "behaviour"] = name
     d["session_attack"] = (d["behaviour"] != "").astype(int)
     d = d.drop(columns=["_t", "_path0", "_soft404", "_login", "_res", "_id"])
     return sessions.sort_values("risk_score", ascending=False, kind="stable").reset_index(drop=True), d

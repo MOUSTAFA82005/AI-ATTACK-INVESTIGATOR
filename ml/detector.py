@@ -56,7 +56,16 @@ def has_payload(X):
 # Files a site may really offer for download. A request for one is a probe when a
 # scanner guesses it, but not when the site serves it to an ordinary visitor.
 DOWNLOAD_EXT = (".tar", ".gz", ".tgz", ".zip", ".conf", ".ini", ".java")
-_FILE_SIGNALS = ["p_probe_ext", "p_probe_path", "v_kw_total"]   # v_kw_total counts the first two
+_FILE_SIGNALS = ["p_probe_ext", "p_probe_path", "v_kw_total"]   # v_kw_total counts p_probe_path
+# Not given to the detector: a file name ending in .gz/.log/.zip/.bak is not a payload. A site
+# that hosts archives (real log: secrepo.com) gets every download flagged if the detector
+# decides on it. Whether someone is probing for files is judged by the behaviour model,
+# from what the site answered and whether other visitors open the same file.
+NOT_FOR_DETECTOR = ["p_probe_ext"]
+
+
+def detector_columns(X):
+    return [c for c in X.columns if c != "text" and c not in NOT_FOR_DETECTOR]
 
 
 def served_files(df, X, pred):

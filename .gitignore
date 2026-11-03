@@ -10,6 +10,7 @@ data/raw/*
 data/processed/*
 lab/logs/*
 data/labels/*
+data/sealed/
 !**/.gitkeep
 
 # Saved models

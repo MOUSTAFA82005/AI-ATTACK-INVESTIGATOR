@@ -33,7 +33,8 @@ def match(log_path, labels_path):
         for _, row in L.iterrows():
             if j < len(R) and row["key"] == R.loc[j, "key"]:
                 out.append({**row.to_dict(), "label": R.loc[j, "label"],
-                            "attack_type": R.loc[j, "attack_type"]})
+                            "attack_type": R.loc[j, "attack_type"],
+                            **({"true_stage": R.loc[j, "stage"]} if "stage" in R else {})})
                 j += 1
             else:
                 extra_log += 1
