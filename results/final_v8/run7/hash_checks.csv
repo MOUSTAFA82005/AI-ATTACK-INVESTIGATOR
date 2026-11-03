@@ -1,0 +1,67 @@
+what,file,ok
+model,models/attack_type.joblib,True
+model,models/block_rules.joblib,True
+model,models/context.joblib,True
+model,models/detector.joblib,True
+model,models/stage.joblib,True
+model,models/next_step.json,True
+lab juiceshop,data/raw/juiceshop_generated_run7.log,True
+lab juiceshop,data/labels/requests_run7.csv,True
+lab juiceshop,data/labels/sessions_run7.csv,True
+lab dvwa,data/raw/dvwa_generated_run7.log,True
+lab dvwa,data/labels/requests_dvwa_run7.csv,True
+lab dvwa,data/labels/sessions_dvwa_run7.csv,True
+lab bwapp,data/raw/bwapp_generated_run7.log,True
+lab bwapp,data/labels/requests_bwapp_run7.csv,True
+lab bwapp,data/labels/sessions_bwapp_run7.csv,True
+lab mutillidae,data/raw/mutillidae_generated_run7.log,True
+lab mutillidae,data/labels/requests_mutillidae_run7.csv,True
+lab mutillidae,data/labels/sessions_mutillidae_run7.csv,True
+lab dvna,data/raw/dvna_generated_run7.log,True
+lab dvna,data/labels/requests_dvna_run7.csv,True
+lab dvna,data/labels/sessions_dvna_run7.csv,True
+lab vampi,data/raw/vampi_generated_run7.log,True
+lab vampi,data/labels/requests_vampi_run7.csv,True
+lab vampi,data/labels/sessions_vampi_run7.csv,True
+lab dvga,data/raw/dvga_generated_run7.log,True
+lab dvga,data/labels/requests_dvga_run7.csv,True
+lab dvga,data/labels/sessions_dvga_run7.csv,True
+lab webgoat,data/raw/webgoat_generated_run7.log,True
+lab webgoat,data/labels/requests_webgoat_run7.csv,True
+lab webgoat,data/labels/sessions_webgoat_run7.csv,True
+tool,data/sealed/run7_tools/tool_dalfox_bwapp.log,True
+tool,data/sealed/run7_tools/tool_dalfox_dvga.log,True
+tool,data/sealed/run7_tools/tool_dalfox_dvna.log,True
+tool,data/sealed/run7_tools/tool_dalfox_dvwa.log,True
+tool,data/sealed/run7_tools/tool_dalfox_juiceshop.log,True
+tool,data/sealed/run7_tools/tool_dalfox_mutillidae.log,True
+tool,data/sealed/run7_tools/tool_dalfox_vampi.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_bwapp.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_dvga.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_dvna.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_dvwa.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_juiceshop.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_mutillidae.log,True
+tool,data/sealed/run7_tools/tool_feroxbuster_vampi.log,True
+tool,data/sealed/run7_tools/tool_gobuster_bwapp.log,True
+tool,data/sealed/run7_tools/tool_gobuster_dvga.log,True
+tool,data/sealed/run7_tools/tool_gobuster_dvna.log,True
+tool,data/sealed/run7_tools/tool_gobuster_dvwa.log,True
+tool,data/sealed/run7_tools/tool_gobuster_juiceshop.log,True
+tool,data/sealed/run7_tools/tool_gobuster_mutillidae.log,True
+tool,data/sealed/run7_tools/tool_gobuster_vampi.log,True
+tool,data/sealed/run7_tools/tool_medusa_bwapp.log,True
+tool,data/sealed/run7_tools/tool_medusa_mutillidae.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_bwapp.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_dvga.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_dvna.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_dvwa.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_juiceshop.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_mutillidae.log,True
+tool,data/sealed/run7_tools/tool_wfuzz_vampi.log,True
+real zanbil,data/sealed/zanbil_run7.log,True
+real secrepo,data/sealed/access.log.2024-10-03.gz,True
+real secrepo,data/sealed/access.log.2024-10-10.gz,True
+real secrepo,data/sealed/access.log.2024-10-15.gz,True
+real secrepo,data/sealed/access.log.2025-04-22.gz,True
+real secrepo,data/sealed/access.log.2026-06-01.gz,True

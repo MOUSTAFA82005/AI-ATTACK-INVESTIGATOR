@@ -17,7 +17,7 @@ Then it measures, for the ML pipeline ("model + sessions") and the rules baselin
   4. a blind sample of flagged real requests for hand labelling (no verdict or score in it).
 
 Everything goes to results/final_v8/run7/ (tables, RUN7-RESULTS.md). The hand-label sample
-holds real log lines and goes to data/run7_hand_label/, which is never committed.
+holds real log lines and goes to data/sealed/run7_hand_label/, which is never committed.
 """
 import argparse
 import gzip
@@ -51,7 +51,7 @@ SECREPO_DAYS = ["2024-10-03", "2024-10-10", "2024-10-15", "2025-04-22", "2026-06
 NEXT_STEP_CEILING = 0.38
 SAMPLE_PER_LOG, SAMPLE_SEED = 200, 7007
 OUT = Path("results/final_v8/run7")
-HAND = Path("data/run7_hand_label")
+HAND = Path("data/sealed/run7_hand_label")   # git-ignored: real log lines
 
 
 # ---------------------------------------------------------------- files and hashes
