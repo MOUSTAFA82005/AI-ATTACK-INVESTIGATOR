@@ -1,0 +1,68 @@
+tools container IP: 172.19.0.17
+== juiceshop gobuster start 2026-11-03T20:58:46Z
+   juiceshop gobuster end 2026-11-03T20:58:48Z lines 2
+== juiceshop feroxbuster start 2026-11-03T20:58:48Z
+   juiceshop feroxbuster end 2026-11-03T21:03:38Z lines 37002
+== juiceshop wfuzz start 2026-11-03T21:03:38Z
+   juiceshop wfuzz end 2026-11-03T21:04:38Z lines 4616
+== juiceshop dalfox start 2026-11-03T21:04:38Z
+   juiceshop dalfox end 2026-11-03T21:05:00Z lines 2
+   juiceshop medusa skipped: JSON login, medusa web-form sends form fields only
+== dvwa gobuster start 2026-11-03T21:05:00Z
+   dvwa gobuster end 2026-11-03T21:05:07Z lines 4615
+== dvwa feroxbuster start 2026-11-03T21:05:07Z
+   dvwa feroxbuster end 2026-11-03T21:05:14Z lines 4639
+== dvwa wfuzz start 2026-11-03T21:05:15Z
+   dvwa wfuzz end 2026-11-03T21:05:23Z lines 4614
+== dvwa dalfox start 2026-11-03T21:05:23Z
+   dvwa dalfox end 2026-11-03T21:05:25Z lines 0
+== dvwa medusa start 2026-11-03T21:05:25Z
+   dvwa medusa end 2026-11-03T21:05:27Z lines 2
+== bwapp gobuster start 2026-11-03T21:05:27Z
+   bwapp gobuster end 2026-11-03T21:05:34Z lines 4615
+== bwapp feroxbuster start 2026-11-03T21:05:34Z
+   bwapp feroxbuster end 2026-11-03T21:06:20Z lines 23205
+== bwapp wfuzz start 2026-11-03T21:06:20Z
+   bwapp wfuzz end 2026-11-03T21:06:34Z lines 4614
+== bwapp dalfox start 2026-11-03T21:06:34Z
+   bwapp dalfox end 2026-11-03T21:06:36Z lines 0
+== bwapp medusa start 2026-11-03T21:06:36Z
+   bwapp medusa end 2026-11-03T21:06:39Z lines 200
+== mutillidae gobuster start 2026-11-03T21:06:39Z
+   mutillidae gobuster end 2026-11-03T21:06:46Z lines 4615
+== mutillidae feroxbuster start 2026-11-03T21:06:46Z
+   mutillidae feroxbuster end 2026-11-03T21:07:48Z lines 28512
+== mutillidae wfuzz start 2026-11-03T21:07:48Z
+   mutillidae wfuzz end 2026-11-03T21:07:55Z lines 4614
+== mutillidae dalfox start 2026-11-03T21:07:55Z
+   mutillidae dalfox end 2026-11-03T21:08:23Z lines 64
+== mutillidae medusa start 2026-11-03T21:08:23Z
+   mutillidae medusa end 2026-11-03T21:08:28Z lines 200
+== dvna gobuster start 2026-11-03T21:08:28Z
+   dvna gobuster end 2026-11-03T21:08:36Z lines 4615
+== dvna feroxbuster start 2026-11-03T21:08:36Z
+   dvna feroxbuster end 2026-11-03T21:09:20Z lines 23131
+== dvna wfuzz start 2026-11-03T21:09:20Z
+   dvna wfuzz end 2026-11-03T21:09:35Z lines 4614
+== dvna dalfox start 2026-11-03T21:09:35Z
+   dvna dalfox end 2026-11-03T21:09:37Z lines 0
+== dvna medusa start 2026-11-03T21:09:37Z
+   dvna medusa end 2026-11-03T21:09:39Z lines 2
+== vampi gobuster start 2026-11-03T21:09:39Z
+   vampi gobuster end 2026-11-03T21:09:51Z lines 4615
+== vampi feroxbuster start 2026-11-03T21:09:51Z
+   vampi feroxbuster end 2026-11-03T21:10:14Z lines 9253
+== vampi wfuzz start 2026-11-03T21:10:15Z
+   vampi wfuzz end 2026-11-03T21:10:28Z lines 4614
+== vampi dalfox start 2026-11-03T21:10:28Z
+   vampi dalfox end 2026-11-03T21:10:31Z lines 34
+   vampi medusa skipped: JSON login, medusa web-form sends form fields only
+== dvga gobuster start 2026-11-03T21:10:31Z
+   dvga gobuster end 2026-11-03T21:10:38Z lines 4615
+== dvga feroxbuster start 2026-11-03T21:10:38Z
+   dvga feroxbuster end 2026-11-03T21:10:47Z lines 4654
+== dvga wfuzz start 2026-11-03T21:10:47Z
+   dvga wfuzz end 2026-11-03T21:10:55Z lines 4614
+== dvga dalfox start 2026-11-03T21:10:55Z
+   dvga dalfox end 2026-11-03T21:10:57Z lines 57
+   dvga medusa skipped: JSON login, medusa web-form sends form fields only
