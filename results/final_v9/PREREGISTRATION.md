@@ -115,3 +115,32 @@ Glastopf IPs flagged from .193 to .101, so it fails the recall condition. The ru
 DETECTOR_THRESHOLD, used by eval/final_test.py and the backend). 0.8 is reported as a sensitivity row, not used.
 The behaviour model's payload_score feature keeps 0.5, the value it was trained with. The final models (trained on all
 DEV days) use 0.7, chosen with the held-out model: the final model's calibration can differ slightly.
+
+### Amendment 6 (2026-11-04, after the freeze at tag v9.0-final-test, before the sealed test): file formats and fixed rules
+Models were frozen and hashed (results/final_v9/model_hashes.txt, commit 4f046f8) BEFORE this step, so nothing below can
+change a model. The formats of the Indonesian archives and of owasp.zip were not known, and a test script written blind
+would fail on the sealed files. A format-only check was run (by Claude, on the laptop): zip member names with digits
+masked, sizes, the share of the first 1,000 lines of each file type that match the combined access-log format, the
+YAML rule structure (key names, value types, number of rules, the label NAMES and sensitivity values; never the filter
+strings) and the section letters of the ModSecurity audit log. No request, IP, label of any line or attack count was
+printed. Found: organization-x = Apache combined access logs (web-access.log + rotations, some .gz) plus error, auth and
+syslog files; organization-y = OpenLiteSpeed combined access logs per site (home/<site>/logs/*.access_log*, one file
+2.4 GB, 4.5 GB in total); each has one YAML file of rules {id, filter: list of strings, ground_truth_label, sensitivity};
+filter strings use no regular-expression syntax (3 do not even compile as a regex), so they are plain substrings;
+owasp.zip = 30 daily ModSecurity audit logs (sections A, B, C, E, F, H, Z).
+Rules fixed now, before any sealed request is read:
+- Indonesian: only web access logs are used (file name contains access_log or access.log; the CyberPanel admin
+  panel log under /lscp/ is left out). A line is an attack when ALL filter strings of one rule occur in the raw line
+  (any rule, any sensitivity); unmatched lines are benign (as the dataset says). Each site (one vhost's live file plus
+  its rotations, oldest first) is capped at its NEWEST 200,000 requests (laptop memory; same size as the zanbil slice).
+  Headline: share of benign requests flagged. Recall on matched lines is shown as an extra, not preregistered.
+- owasp.zip (ModSecurity 30-day): request from section B, body from C, status and Content-Length from F, time and
+  IP from A; section H (the rules that fired = the answer) is never read. Pipeline run per day. Secondary number only.
+- ModSec-WP: label names are mapped by keyword to sqli, xss, fileinclusion, rce, bruteforce, normal (anything else is
+  reported as "other:<name>"). Attack type counts as right when: sqli -> sqli; xss -> xss; fileinclusion -> traversal or
+  ssrf; rce -> cmdi, ssti or log4shell. Brute force is measured as detection only.
+- v8 is run with its own code (worktree of tag v8.0-final-test, threshold 0.5) and its frozen models (models/v8_backup,
+  hashes checked). Rules baseline = payload rules and rules + rule sessions of the same run. Every source is converted
+  once, by the same converter, for all three.
+- SR-BH: per request only (Amendment 3), per day. v9 at threshold 0.8 is shown as a sensitivity row (Amendment 5).
+Script: eval/v9_sealed_test.py (tested on fake files in the same formats; tests/test_v9_sealed_helpers.py).
