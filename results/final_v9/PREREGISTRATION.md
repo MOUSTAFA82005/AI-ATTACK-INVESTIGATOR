@@ -67,4 +67,8 @@ Hashes: results/final_v9/hashes.txt (7 files incl. zanbil_v9.log). Sealed folder
 Not obtained before training, so dropped from the sealed test: Charles University log (still downloading). If it arrives later it may only be used as an extra, clearly labelled not-preregistered check.
 
 ## Amendments
-(none yet)
+### Amendment 1 (2026-11-04, before any model run)
+While writing the converter, the first DEV Glastopf record was seen to be a plain stylesheet request (pattern style_css).
+So "all honeypot traffic is attack" is not true per request: crawlers and bots also hit the honeypot.
+Change: for Glastopf the headline number is per IP (share of source IPs with at least one flagged request);
+the per-request share flagged is reported as secondary. Nothing else changes.
