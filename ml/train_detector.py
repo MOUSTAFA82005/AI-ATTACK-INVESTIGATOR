@@ -37,6 +37,12 @@ and the Glastopf honeypot DEV months (real attackers; only requests that carry a
 never read here. `--srbh-days` / `--glastopf-until` hold DEV data out for the dev check, `--out` saves elsewhere.
 
     python -m ml.train_detector --v9 --out models/detector_v9.joblib
+
+v10 (results/final_v10/PREREGISTRATION.md, Amendment 1): `--v10` = v9 data + half 0 of ModSec-WP (data the v9 sealed
+test used, now dev): its normal WordPress requests and capped payload attacks. Half 1 is the dev check
+(eval/v10_payload_dev.py).
+
+    python -m ml.train_detector --v10 --out models/detector_v10.joblib
 """
 import argparse
 import os
@@ -150,11 +156,48 @@ def load_glastopf(until):
     return X, pd.Series(1, index=range(len(X)))
 
 
+MODSECWP = V9_DIR / "sealed" / "modsecwp.csv"      # used by the v9 sealed test; DEV data for v10
+MODSECWP_ATTACK_FAMILIES = {"rce": 2_500, "xss": 1_500, "fileinclusion": 1_500, "sqli": 1_500}
+
+
+def modsecwp_half(method, path, body):
+    """0 or 1 for each distinct request (a fixed hash): half 0 trains, half 1 is the v10 dev check."""
+    import zlib
+    return pd.Series([zlib.crc32(f"{m}\t{p}\t{b}".encode("utf-8", "replace")) % 2
+                      for m, p, b in zip(method, path, body)], index=method.index)
+
+
+def load_modsecwp(half=0):
+    """v10: ModSec-WP (real WordPress traffic, labels from ModSecurity) half `half`: all its normal
+    requests (WordPress logins and admin pages: the v9 model flagged 98.8% of normal wp-login POSTs)
+    and up to MODSECWP_ATTACK_FAMILIES payload attacks per family (RCE: v9 caught .683). Brute force
+    rows are left out (behaviour, not payload)."""
+    if not MODSECWP.exists():
+        print(f"{MODSECWP} not found: no ModSec-WP")
+        return pd.DataFrame(), pd.Series(dtype=int)
+    df = pd.read_csv(MODSECWP, dtype=str, keep_default_na=False)
+    df = df.drop_duplicates(["method", "path", "body", "label"])
+    df = df[modsecwp_half(df["method"], df["path"], df["body"]) == half]
+    nor = df[df["label"] == "0"]
+    parts = [(to_frame(nor["method"], nor["path"], nor["body"]), pd.Series(0, index=range(len(nor))))]
+    counts = {"normal": len(nor)}
+    for fam, cap in MODSECWP_ATTACK_FAMILIES.items():
+        a = df[(df["label"] == "1") & (df["families"] == fam)]
+        Xa = to_frame(a["method"], a["path"], a["body"])
+        Xa = Xa[has_payload(Xa).values].reset_index(drop=True)
+        Xa = Xa.sample(min(cap, len(Xa)), random_state=0).reset_index(drop=True)
+        parts.append((Xa, pd.Series(1, index=range(len(Xa)))))
+        counts[fam] = len(Xa)
+    print(f"adding ModSec-WP half {half}: {counts}")
+    return (pd.concat([p[0] for p in parts], ignore_index=True), pd.concat([p[1] for p in parts], ignore_index=True))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--v9", action="store_true", help="also train on SR-BH and Glastopf DEV data")
     ap.add_argument("--srbh-days", default=",".join(SRBH_DEV_DAYS))
     ap.add_argument("--glastopf-until", default="2015-04-01")
+    ap.add_argument("--v10", action="store_true", help="v9 data + ModSec-WP half 0 (results/final_v10/PREREGISTRATION.md)")
     ap.add_argument("--out", default=str(MODEL_PATH))
     args = ap.parse_args(argv)
     df = pd.read_csv(ROOT / "data" / "processed" / "csic_clean.csv", keep_default_na=False)
@@ -181,10 +224,13 @@ def main(argv=None):
     Xl, yl = load_lab()
     Xz, yz = load_real_normals()
     X, y = pd.concat([X, Xl, Xz], ignore_index=True), pd.concat([y, yl, yz], ignore_index=True)
-    if args.v9:
+    if args.v9 or args.v10:
         Xs, ys = load_srbh(args.srbh_days.split(","))
         Xg, yg = load_glastopf(args.glastopf_until)
         X, y = pd.concat([X, Xs, Xg], ignore_index=True), pd.concat([y, ys, yg], ignore_index=True)
+        if args.v10:
+            Xm, ym = load_modsecwp(0)
+            X, y = pd.concat([X, Xm], ignore_index=True), pd.concat([y, ym], ignore_index=True)
         X = X.fillna(0)
     hand_cols = detector_columns(X)
 

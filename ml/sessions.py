@@ -30,6 +30,7 @@ risk (never hidden: the user agent can be faked, and its attack payloads still c
 """
 import json
 import re
+import zlib
 from urllib.parse import parse_qsl
 
 import pandas as pd
@@ -151,13 +152,37 @@ def _is_probe(method, path):
     return bool(f["p_probe_path"] or f["p_probe_ext"])
 
 
+# v10: one visitor = one IP + one user agent (when the log has user agents). Behind a proxy, a
+# NAT or a company gateway, one IP carries many people; on the v9 sealed test, logs written behind a
+# reverse proxy put all visitors of a site on 1-3 IPs and the session layer flagged 75-87% of normal
+# requests there (results/final_v10/dev/SESSION_DIAG.md). A tool keeps one user agent, so it stays one
+# visitor. A tool that changes its user agent on every request is split into many short visits
+# (stated in the report as a limitation).
+SPLIT_BY_AGENT = True
+_DIGITS = re.compile(r"\d+")
+
+
+def visitor_key(df):
+    """The visitor of each request: the IP, plus a short hash of the user agent when there is one."""
+    ip = df["ip"].astype(str)
+    if not SPLIT_BY_AGENT or "user_agent" not in df:
+        return ip
+    ua = df["user_agent"].fillna("").astype(str)
+    # v10 Amendment 3: digits are removed first. Scanners such as nikto put a test number in
+    # the user agent ("(Test:000123)"), which would make every request a new visitor.
+    tag = ua.map(lambda u: format(zlib.crc32(_DIGITS.sub("", u).encode("utf-8", "replace")), "08x"))
+    return ip.where(ua.isin(["", "-"]), ip + "|" + tag)
+
+
 def add_session_ids(df):
-    """Add a `session` column: per IP, a new session after SESSION_GAP of silence."""
+    """Add `_visitor` and `session` columns: per visitor (IP + user agent), a new session after
+    SESSION_GAP of silence."""
     d = df.copy()
+    d["_visitor"] = visitor_key(d)
     d["_t"] = pd.to_datetime(d["timestamp"], utc=True, errors="coerce")
-    d = d.sort_values(["ip", "_t"], kind="stable")
-    new = d.groupby("ip")["_t"].diff().gt(SESSION_GAP).astype(int)
-    d["session"] = d["ip"] + "#" + new.groupby(d["ip"]).cumsum().astype(str)
+    d = d.sort_values(["_visitor", "_t"], kind="stable")
+    new = d.groupby("_visitor")["_t"].diff().gt(SESSION_GAP).astype(int)
+    d["session"] = d["_visitor"] + "#" + new.groupby(d["_visitor"]).cumsum().astype(str)
     return d
 
 
@@ -303,5 +328,5 @@ def analyze_sessions(df, context_model=None):
         for name in reversed(list(marks)):           # bruteforce wins over enumeration over scan
             d.loc[marks[name], "behaviour"] = name
     d["session_attack"] = (d["behaviour"] != "").astype(int)
-    d = d.drop(columns=["_t", "_path0", "_soft404", "_login", "_res", "_id"])
+    d = d.drop(columns=["_t", "_path0", "_soft404", "_login", "_res", "_id", "_visitor"])
     return sessions.sort_values("risk_score", ascending=False, kind="stable").reset_index(drop=True), d

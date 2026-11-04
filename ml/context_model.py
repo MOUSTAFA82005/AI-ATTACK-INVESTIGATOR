@@ -37,6 +37,8 @@ UNIQUE_ANSWER_STATUSES = [301, 304]
 # For a login attempt, how many other pages share its answer says nothing about it.
 APL_LOGIN_ZERO = True
 SHARED_BY = 3          # a request sent by this many visitors or more is navigation, not input
+NO_SIZE_SHARE = 0.9    # v10: this share of 2xx answers with no size = the log does not record sizes
+MIN_SIZED_ANSWERS = 50
 FEATURES = [
     # the request itself
     "password_field", "payload_score", "page_popularity", "answer_pages_log",
@@ -152,7 +154,8 @@ def context_features(df):
     st = pd.to_numeric(d["status"], errors="coerce").fillna(0).astype(int)
     size = pd.to_numeric(d["size"], errors="coerce").fillna(0) if "size" in d else pd.Series(0, index=d.index)
     page = path.str.split("?").str[0]
-    shape = _page_shapes(path, d["ip"])
+    who = d["_visitor"]                   # v10: IP + user agent (ml/sessions.py visitor_key)
+    shape = _page_shapes(path, who)
     ids = pd.Series([_object_id(p, b) for p, b in zip(path, body)], index=d.index)
     res, rid = ids.str[0], ids.str[1]
     session = d["session"]
@@ -173,14 +176,21 @@ def context_features(df):
     # The detector's yes/no, not its raw probability: tiny differences between 0.0001 and
     # 0.0003 are noise of one site's wording, and a model split on them does not travel.
     f["payload_score"] = (d["proba"].values >= 0.5).astype(float) if "proba" in d else 0.0
-    n_ips = max(2, d["ip"].nunique())
-    visitors = d.groupby(shape)["ip"].transform("nunique")
+    n_ips = max(2, who.nunique())
+    visitors = who.groupby(shape).transform("nunique")
     f["page_popularity"] = np.log(visitors) / np.log(n_ips)      # 0 = only this visitor, 1 = everyone
     # The answer = status + size rounded to 256 bytes: a not-found page that repeats the
     # requested address back changes its size by a few bytes, it is still the same page.
     answer = st.astype(str) + ":" + (size // 256).astype(int).astype(str)
     if UNIQUE_ANSWER_STATUSES:
         own = st.isin(UNIQUE_ANSWER_STATUSES)
+        # v10: a log that does not record the answer size (size 0 / "-" on almost every 2xx answer,
+        # e.g. logs exported from a WAF) gives every page the same "200:0" answer, which reads as a
+        # scanner getting one not-found page. There a 2xx answer says nothing about the page, so it
+        # counts as the page's own answer; error answers (404, 403, 5xx) still count as shared.
+        ok2 = st.between(200, 299)
+        if ok2.sum() >= MIN_SIZED_ANSWERS and (size[ok2] <= 0).mean() >= NO_SIZE_SHARE:
+            own = own | ok2
         answer = answer.where(~own, answer + ":" + shape)
     f["answer_pages_log"] = shape.groupby(answer).transform("nunique") / max(1, shape.nunique())
     if APL_LOGIN_ZERO:
@@ -199,7 +209,7 @@ def context_features(df):
     # share are navigation (index.php?page=user-poll.php), not input, and do not count.
     has_fields = pd.Series([len(ns) > 0 for ns in names], index=d.index)
     sent = pd.Series([_sent_signature(p, b) for p, b in zip(path, body)], index=d.index)
-    own = sent.where(d.groupby(sent)["ip"].transform("nunique") < SHARED_BY)
+    own = sent.where(who.groupby(sent).transform("nunique") < SHARED_BY)
     own_values = own.groupby([session, form]).transform("nunique").fillna(0)
     f["form_values"] = np.log1p(own_values) * has_fields
     f["ids_vs_typical"] = _vs_typical(f["ids_this_resource"], res, session)
