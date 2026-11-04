@@ -22,7 +22,7 @@ class FakeDetector:
     """High attack probability when the path contains 'attack', low otherwise."""
 
     def predict_proba(self, X):
-        p = np.array([0.95 if "attack" in path else 0.05 for path in X])
+        p = np.array([0.95 if "attack" in path else 0.75 if "borderline" in path else 0.05 for path in X])
         return np.column_stack([1 - p, p])
 
 
@@ -534,3 +534,28 @@ def test_new_modules_are_called_once_on_original_text(client, type_calls):
     assert len(client.calls["unusual"]) == 1
     assert len(client.calls["reasons"]) == 1
     assert any("pwd=abc" in p for p in client.calls["reasons"][0])   # unmasked
+# ---------- operating mode (sensitive 0.7 / quiet 0.8) ----------
+
+BORDERLINE = '10.0.0.9 - - [16/Oct/2026:18:00:03 +0000] "GET /borderline?q=1 HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'
+
+
+def test_default_mode_is_sensitive(client):
+    r = post_log(client, BORDERLINE).json()
+    assert r["mode"] == "sensitive" and r["threshold"] == 0.7
+    assert r["results"][0]["label"] == "attack"          # 0.75 >= 0.7
+
+
+def test_quiet_mode_raises_threshold(client):
+    r = client.post("/analyze?mode=quiet", files={"file": ("t.log", BORDERLINE.encode(), "text/plain")}).json()
+    assert r["mode"] == "quiet" and r["threshold"] == 0.8
+    assert r["results"][0]["label"] == "normal"          # 0.75 < 0.8
+
+
+def test_quiet_mode_on_investigate(client):
+    r = client.post("/investigate?mode=quiet", files={"file": ("t.log", (COMBINED + BORDERLINE).encode(), "text/plain")})
+    assert r.status_code == 200 and r.json()["threshold"] == 0.8
+
+
+def test_unknown_mode_is_rejected(client):
+    r = client.post("/analyze?mode=loud", files={"file": ("t.log", BORDERLINE.encode(), "text/plain")})
+    assert r.status_code == 400 and "sensitive" in r.json()["detail"]

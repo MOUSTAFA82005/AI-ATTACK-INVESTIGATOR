@@ -28,6 +28,10 @@ MODEL_PATH = ROOT / "models" / "detector.joblib"
 # test by the rule written in results/final_v9/PREREGISTRATION.md (Amendment 5):
 # eval/v9_threshold.py -> results/final_v9/threshold/THRESHOLD.md. Was 0.5 before v9.
 DETECTOR_THRESHOLD = 0.7
+# Operating modes offered by the backend. "sensitive" is the preregistered default above (all reported
+# results use it). "quiet" = 0.8, the sensitivity row of Amendment 5: far fewer false alarms on real
+# traffic, lower recall; measured on DEV and in the sealed test (payload detector), never tuned there.
+MODES = {"sensitive": DETECTOR_THRESHOLD, "quiet": 0.8}
 
 # Features that only fire when a request carries something suspicious.
 _SIGNAL_PREFIXES = ("v_ctx_", "v_chr_", "v_kw", "p_", "v_sql", "v_taut", "v_crlf", "double", "null")

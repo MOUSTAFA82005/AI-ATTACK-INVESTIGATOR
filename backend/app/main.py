@@ -6,14 +6,14 @@ import joblib
 import numpy as np
 import pandas as pd
 from collections import Counter
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
-from ml.detector import DETECTOR_THRESHOLD, MODEL_PATH, served_files, to_frame  # noqa: E402
+from ml.detector import MODES, MODEL_PATH, served_files, to_frame  # noqa: E402
 from ml.sessions import analyze_sessions  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
 from ml.stage import add_stages  # noqa: E402
@@ -47,7 +47,13 @@ def health():
     return {"status": "ok", "model_loaded": detector is not None}
 
 
-async def _read_and_predict(file: UploadFile):
+def _threshold(mode):
+    if mode not in MODES:
+        raise HTTPException(400, f"Unknown mode '{mode}'. Use one of: {', '.join(MODES)}.")
+    return MODES[mode]
+
+
+async def _read_and_predict(file: UploadFile, threshold=MODES["sensitive"]):
     """Shared by /analyze and /investigate.
 
     Checks the model, the file size and the format, parses the log and runs the model.
@@ -84,7 +90,7 @@ async def _read_and_predict(file: UploadFile):
         # Everything below works on the ORIGINAL (unmasked) text.
         X = to_frame([r["method"] for r in rows], [r["path"] for r in rows], [r["body"] for r in rows])
         probs = detector.predict_proba(X)[:, 1]
-        pred = (probs >= DETECTOR_THRESHOLD).astype(int)
+        pred = (probs >= threshold).astype(int)
 
         # A real file that the site served to a visitor is not a probe (same as eval/final_test.py).
         frame = pd.DataFrame({"ip": [r["ip"] for r in rows],
@@ -105,9 +111,12 @@ async def _read_and_predict(file: UploadFile):
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
-    """Read an access log and mark each request as normal or attack."""
-    rows, skipped, fmt = await _read_and_predict(file)
+async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive")):
+    """Read an access log and mark each request as normal or attack.
+
+    mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8: fewer false alarms, misses more)."""
+    threshold = _threshold(mode)
+    rows, skipped, fmt = await _read_and_predict(file, threshold)
 
     # Mask AFTER the model has seen the original text, so detection does not change.
     for r in rows:
@@ -118,6 +127,8 @@ async def analyze(file: UploadFile = File(...)):
     return {
         "filename": file.filename,
         "format": fmt,
+        "mode": mode,
+        "threshold": threshold,
         "has_body": any(r["body"] for r in rows),
         "lines": len(rows) + skipped,
         "parsed": len(rows),
@@ -153,13 +164,18 @@ _REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body
                     "attack_prob", "label", "row"]
 
 @app.post("/investigate")
-async def investigate(file: UploadFile = File(...)):
-    """Group the requests of a log into sessions (one IP, gaps under 30 min) and score each one."""
-    rows, skipped, fmt = await _read_and_predict(file)
+async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive")):
+    """Group the requests of a log into sessions (one IP, gaps under 30 min) and score each one.
+
+    mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8), as in /analyze."""
+    threshold = _threshold(mode)
+    rows, skipped, fmt = await _read_and_predict(file, threshold)
 
     result = {
         "filename": file.filename,
         "format": fmt,
+        "mode": mode,
+        "threshold": threshold,
         "has_body": any(r["body"] for r in rows),
         "parsed": len(rows),
         "skipped": skipped,
