@@ -8,11 +8,19 @@ of every request the pipeline called an attack, from what the log shows.
 
     python -m ml.train_stage [tag ...]      (default tags: st21 st22 st31 st32)
 
+v9: --ait-hosts adds AIT-LDS v1.1 hosts (real nikto = recon, hydra guesses = intrusion,
+web-shell upload and use = exploitation; eval/v9_convert_ait.py), at most AIT_MAX_PER_STAGE
+requests per stage and host; --model / --context / --type pick the models the pipeline runs
+with (the stage model learns from what they say), --out where to save:
+
+    python -m ml.train_stage --ait-hosts cup,insect --model models/detector_v9_holdout2.joblib \
+        --context models/context_v9.joblib --type models/attack_type_v9.joblib --out models/stage_v9.joblib
+
 Runs are data/raw/<site>_generated_<tag>.log + data/labels/requests[_<site>]_<tag>.csv
 for the five lab sites (Juice Shop's label files have no site prefix); missing runs are skipped.
 """
+import argparse
 import os
-import sys
 
 import joblib
 import numpy as np
@@ -62,7 +70,48 @@ def fit(X, y):
     return model
 
 
+AIT_MAX_PER_STAGE = 3000
+
+
+def ait_rows(hosts):
+    import eval.final_test as ft
+    from eval.v9_ait_eval import load
+    X, y = [], []
+    for host in hosts:
+        if not os.path.exists(f"data/processed/v9/ait_{host}.csv"):
+            print("skipped (missing): AIT", host)
+            continue
+        req, _ = ft._pipeline(load(host))
+        rows = attack_rows(req) & (req["true_stage"] != "")
+        F, t = stage_features(req)[rows], req.loc[rows, "true_stage"]
+        keep = pd.concat([t[t == s].sample(min(int((t == s).sum()), AIT_MAX_PER_STAGE), random_state=0)
+                          for s in t.unique()]).index
+        X.append(F.loc[keep]), y.append(t.loc[keep])
+        print("AIT", host, y[-1].value_counts().to_dict())
+    return X, y
+
+
 if __name__ == "__main__":
-    X, y = labelled_rows(sys.argv[1:] or DEFAULT_TAGS)
-    joblib.dump(fit(X, y), STAGE_MODEL_PATH)
-    print("saved", STAGE_MODEL_PATH)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("tags", nargs="*", default=DEFAULT_TAGS)
+    ap.add_argument("--ait-hosts", default="")
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--context", default=None)
+    ap.add_argument("--type", default=None)
+    ap.add_argument("--out", default=STAGE_MODEL_PATH)
+    args = ap.parse_args()
+    import eval.final_test as ft
+    if args.model:
+        ft.MODEL_PATH = args.model
+    if args.context:
+        _ctx = joblib.load(args.context)
+        ft.load_context_model = lambda: _ctx
+    if args.type:
+        _typ = joblib.load(args.type)
+        ft.load_type_model = lambda: _typ
+    X, y = labelled_rows(args.tags or DEFAULT_TAGS)
+    Xa, ya = ait_rows([h for h in args.ait_hosts.split(",") if h])
+    X, y = pd.concat([X] + Xa, ignore_index=True), pd.concat([y] + ya, ignore_index=True)
+    print("training on", y.value_counts().to_dict())
+    joblib.dump(fit(X, y), args.out)
+    print("saved", args.out)

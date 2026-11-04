@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from ml import graphql
-from ml.sessions import _STATIC, _id_of, _shape, add_session_ids, field_names
+from ml.sessions import LOGIN_PATH, _STATIC, _id_of, _shape, add_session_ids, field_names
 
 MODEL_PATH = "models/context.joblib"
 BEHAVIOURS = ["normal", "bruteforce", "enumeration", "scan"]
@@ -43,6 +43,8 @@ FEATURES = [
     # the request inside its session
     "same_page_in_session", "ids_this_resource", "attempts_this_form", "form_same_answer",
     "form_values",
+    # the request against the other visitors of the same page or form (v9)
+    "ids_vs_typical", "values_vs_typical",
     # the session
     "s_requests", "s_pages", "s_max_ids",
     "s_unpopular_share", "s_mean_popularity", "s_top_answer_share",
@@ -119,6 +121,27 @@ def _page_shapes(path, ip):
     return base.where(~base.index.isin(nav.index), base + "?" + nav.reindex(base.index).fillna(""))
 
 
+def _vs_typical(count, key, session):
+    """How far this session goes past a typical visitor of the same resource or form:
+    log(1 + this session's count) - log(1 + the median count over all sessions using that key),
+    0 when it is not above the median or the request has no key.
+
+    Why (v9): in the lab, enumeration and parameter probing hit pages that normal users of
+    the generator never open, so the model learned "popular page = navigation". On WebGoat
+    (normal users open their own profile, /IDOR/profile/{id}) and under dalfox (the probed
+    form is one normal users fill) that shortcut hid the attack. What makes enumeration and
+    probing an attack on any site is going much further than the others on the same page:
+    30 different profile IDs where a visitor opens 2, 40 different values in one form where
+    a visitor sends 1. A shop where everybody browses many products has a high median, so
+    heavy shoppers are not far above it."""
+    k = pd.Series(key, index=count.index)
+    ok = k.notna() & (k.astype(str) != "")
+    per = pd.DataFrame({"k": k[ok], "s": session[ok], "c": count[ok]}).drop_duplicates(["k", "s"])
+    typical = k.map(per.groupby("k")["c"].median()).fillna(0)
+    out = (np.log1p(count) - np.log1p(typical)).clip(lower=0)
+    return out.where(ok, 0.0)
+
+
 def context_features(df):
     """df: one row per request (ip, timestamp, method, path, status, size, body, and
     proba = the payload detector's probability). Returns (feature table, df with `session`),
@@ -136,7 +159,12 @@ def context_features(df):
     f = pd.DataFrame(index=d.index)
 
     names = [field_names(p, b) for p, b in zip(path, body)]
-    f["password_field"] = [int(any(PASSWORD.search(n) for n in ns)) for ns in names]
+    sends_password = pd.Series([any(PASSWORD.search(n) for n in ns) for ns in names], index=d.index)
+    # Most real logs do not record the body (v9: AIT, SR-BH, zanbil). There a login attempt is
+    # only "a POST to a login page"; when the body is logged, its fields decide as before.
+    method = d["method"].fillna("").astype(str).str.upper()
+    blind_login = (body.str.strip() == "") & (method == "POST") & page.str.contains(LOGIN_PATH)
+    f["password_field"] = (sends_password | blind_login).astype(int)
     # A form is its address and the fields it sends: on a site that routes every page
     # through one script (index.php?page=...), the login form and an account-lookup form
     # share the address but not their fields.
@@ -172,7 +200,10 @@ def context_features(df):
     has_fields = pd.Series([len(ns) > 0 for ns in names], index=d.index)
     sent = pd.Series([_sent_signature(p, b) for p, b in zip(path, body)], index=d.index)
     own = sent.where(d.groupby(sent)["ip"].transform("nunique") < SHARED_BY)
-    f["form_values"] = np.log1p(own.groupby([session, form]).transform("nunique").fillna(0)) * has_fields
+    own_values = own.groupby([session, form]).transform("nunique").fillna(0)
+    f["form_values"] = np.log1p(own_values) * has_fields
+    f["ids_vs_typical"] = _vs_typical(f["ids_this_resource"], res, session)
+    f["values_vs_typical"] = _vs_typical(own_values * has_fields, form.where(has_fields), session)
 
     by = d.groupby("session")
     n = by["ip"].transform("size")
@@ -222,7 +253,9 @@ def fit(X, y):
 
 def predict_behaviours(model, X):
     """Behaviour name per request ("" = none) and the model's attack probability."""
-    proba = model.predict_proba(X[FEATURES])
+    # the columns the model was trained with: a model saved before a feature was added still loads
+    cols = list(getattr(model, "feature_names_in_", FEATURES))
+    proba = model.predict_proba(X[cols])
     names = np.array([""] + BEHAVIOURS[1:])[proba.argmax(axis=1)]
     return names, 1 - proba[:, 0]
 

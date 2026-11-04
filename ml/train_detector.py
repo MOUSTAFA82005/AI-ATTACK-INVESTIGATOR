@@ -30,7 +30,15 @@ put inside normal CSIC requests (ml/new_families.py). Build data/raw/new_familie
 with python -m ml.build_new_families; only its "train" payloads are used here, the
 "heldout" ones are kept for the check in notebooks/17_new_families.ipynb. If the file
 is missing we train without them.
+
+v9 (results/final_v9/PREREGISTRATION.md): `--v9` also adds REAL attacks and normal traffic made by others:
+SR-BH 2020 DEV days (labels = ModSecurity CRS; attacks kept only when they carry a payload, as with CSIC)
+and the Glastopf honeypot DEV months (real attackers; only requests that carry a payload). Sealed parts are
+never read here. `--srbh-days` / `--glastopf-until` hold DEV data out for the dev check, `--out` saves elsewhere.
+
+    python -m ml.train_detector --v9 --out models/detector_v9.joblib
 """
+import argparse
 import os
 import sys
 import time
@@ -99,7 +107,56 @@ def load_real_normals():
     return to_frame(df["method"], df["path"], [""] * len(df)), pd.Series(0, index=range(len(df)))
 
 
-def main():
+V9_DIR = ROOT / "data" / "processed" / "v9"
+SRBH_DEV_DAYS = ["2020-07-17", "2020-07-18", "2020-07-19", "2020-07-20",
+                 "2020-07-21", "2020-07-22", "2020-07-23", "2020-07-24"]
+SRBH_MAX_ATTACKS, SRBH_MAX_NORMAL = 40_000, 60_000   # the laptop has little RAM
+
+
+def load_srbh(days):
+    """SR-BH DEV rows of the given days: distinct requests only, attacks only with a payload."""
+    path = V9_DIR / "srbh_dev.csv"
+    if not path.exists():
+        print(f"{path} not found: run python eval/v9_convert.py")
+        return pd.DataFrame(), pd.Series(dtype=int)
+    cols = ["timestamp", "method", "path", "body", "label", "families"]
+    df = pd.read_csv(path, usecols=cols, dtype=str, keep_default_na=False)
+    df = df[df["timestamp"].str[:10].isin(days)].drop_duplicates(["method", "path", "body", "label"])
+    att, nor = df[df["label"] == "1"], df[df["label"] == "0"]
+    att = att.sample(min(len(att), SRBH_MAX_ATTACKS * 3), random_state=0)
+    Xa = to_frame(att["method"], att["path"], att["body"])
+    keep = has_payload(Xa).values
+    Xa = Xa[keep].reset_index(drop=True)
+    if len(Xa) > SRBH_MAX_ATTACKS:
+        Xa = Xa.sample(SRBH_MAX_ATTACKS, random_state=0).reset_index(drop=True)
+    nor = nor.sample(min(len(nor), SRBH_MAX_NORMAL), random_state=0)
+    Xn = to_frame(nor["method"], nor["path"], nor["body"])
+    print(f"adding SR-BH days {days[0]}..{days[-1]}: {len(Xa)} attacks with a payload "
+          f"(of {len(att)} distinct sampled), {len(Xn)} normal")
+    return (pd.concat([Xa, Xn], ignore_index=True),
+            pd.concat([pd.Series(1, index=range(len(Xa))), pd.Series(0, index=range(len(Xn)))], ignore_index=True))
+
+
+def load_glastopf(until):
+    """Glastopf DEV requests before `until` that carry a payload (honeypot: no real users)."""
+    path = V9_DIR / "glastopf_dev.csv"
+    if not path.exists():
+        return pd.DataFrame(), pd.Series(dtype=int)
+    df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    df = df[df["timestamp"].str[:10] < until].drop_duplicates(["method", "path", "body"])
+    X = to_frame(df["method"], df["path"], df["body"])
+    X = X[has_payload(X).values].reset_index(drop=True)
+    print(f"adding Glastopf before {until}: {len(X)} distinct requests with a payload")
+    return X, pd.Series(1, index=range(len(X)))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--v9", action="store_true", help="also train on SR-BH and Glastopf DEV data")
+    ap.add_argument("--srbh-days", default=",".join(SRBH_DEV_DAYS))
+    ap.add_argument("--glastopf-until", default="2015-04-01")
+    ap.add_argument("--out", default=str(MODEL_PATH))
+    args = ap.parse_args(argv)
     df = pd.read_csv(ROOT / "data" / "processed" / "csic_clean.csv", keep_default_na=False)
     X = to_frame(df["Method"], df["path"], df["body"])
     y = df["label"]
@@ -124,6 +181,11 @@ def main():
     Xl, yl = load_lab()
     Xz, yz = load_real_normals()
     X, y = pd.concat([X, Xl, Xz], ignore_index=True), pd.concat([y, yl, yz], ignore_index=True)
+    if args.v9:
+        Xs, ys = load_srbh(args.srbh_days.split(","))
+        Xg, yg = load_glastopf(args.glastopf_until)
+        X, y = pd.concat([X, Xs, Xg], ignore_index=True), pd.concat([y, ys, yg], ignore_index=True)
+        X = X.fillna(0)
     hand_cols = detector_columns(X)
 
     pos, neg = (y == 1).sum(), (y == 0).sum()
@@ -132,9 +194,10 @@ def main():
     pipe = build_pipeline(hand_cols).fit(X, y)
     print(f"done in {time.time() - t:.0f}s")
 
-    MODEL_PATH.parent.mkdir(exist_ok=True)
-    joblib.dump(pipe, MODEL_PATH)
-    print("saved", MODEL_PATH)
+    out = os.path.abspath(args.out)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    joblib.dump(pipe, out)
+    print("saved", out)
 
 
 if __name__ == "__main__":

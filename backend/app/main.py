@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
-from ml.detector import MODEL_PATH, served_files, to_frame  # noqa: E402
+from ml.detector import DETECTOR_THRESHOLD, MODEL_PATH, served_files, to_frame  # noqa: E402
 from ml.sessions import analyze_sessions  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
 from ml.stage import add_stages  # noqa: E402
@@ -25,7 +25,6 @@ from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 
 app = FastAPI(title="AI Attack Investigator")
 FRONTEND = ROOT / "frontend"
-THRESHOLD = 0.5
 MAX_UPLOAD_MB = 50
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
@@ -85,7 +84,7 @@ async def _read_and_predict(file: UploadFile):
         # Everything below works on the ORIGINAL (unmasked) text.
         X = to_frame([r["method"] for r in rows], [r["path"] for r in rows], [r["body"] for r in rows])
         probs = detector.predict_proba(X)[:, 1]
-        pred = (probs >= THRESHOLD).astype(int)
+        pred = (probs >= DETECTOR_THRESHOLD).astype(int)
 
         # A real file that the site served to a visitor is not a probe (same as eval/final_test.py).
         frame = pd.DataFrame({"ip": [r["ip"] for r in rows],

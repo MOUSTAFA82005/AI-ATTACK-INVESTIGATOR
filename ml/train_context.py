@@ -27,7 +27,7 @@ import pandas as pd
 from backend.app.log_parser import decode, parse_log
 from eval.match_labels import match
 from ml.context_model import LABEL_OF, MODEL_PATH, PASSWORD, context_features, fit, target, training_target
-from ml.sessions import field_names
+from ml.sessions import field_names, is_login_attempt
 from ml.detector import MODEL_PATH as DETECTOR_PATH, to_frame
 
 LAB_RUNS = ["run3", "run4", "run5", "camp7", "v4dev", "st21", "st22", "st31", "st32"]
@@ -48,6 +48,12 @@ REAL_NORMAL_LOGS = {"publog": "public_apache_logs.log",        # elastic example
                     "nasa": "nasa_access_jul95.log",            # NASA KSC, July 1995
                     "nginx": "nginx_elastic.log"}               # elastic examples, nginx
 REAL_LINES = 100_000
+# AIT-LDS v1.1 (v9, real tools against a webmail server with simulated users; converted by
+# eval/v9_convert_ait.py). Two hosts train, the other two are kept for the dev check
+# (eval/v9_ait_eval.py). nikto = scan, hydra = brute force; upload / web shell are not behaviour.
+AIT_TRAIN_HOSTS = ("cup", "insect")
+AIT_DIR = "data/processed/v9"
+AIT_COLS = ["ip", "timestamp", "method", "path", "status", "size", "user_agent", "body", "attack_type"]
 
 
 def _with_proba(df, detector):
@@ -177,8 +183,27 @@ def real_normal(zanbil_log, detector):
     return df
 
 
+def ait_logs(detector, hosts=AIT_TRAIN_HOSTS):
+    """(host, requests) of the AIT hosts found in AIT_DIR. As with the tool overlays, a hydra
+    line that sends no password (its page loads, and the ::1 OPTIONS lines the labels also
+    mark) is left out of training instead of teaching that plain page views are brute force."""
+    for host in hosts:
+        path = os.path.join(AIT_DIR, f"ait_{host}.csv")
+        if not os.path.exists(path):
+            print("skipped (missing):", path)
+            continue
+        df = pd.read_csv(path, usecols=AIT_COLS, dtype={"body": str, "user_agent": str}, keep_default_na=False)
+        df["status"] = pd.to_numeric(df["status"], errors="coerce").fillna(0).astype(int)
+        df["size"] = pd.to_numeric(df["size"], errors="coerce").fillna(0).astype(int)
+        df["attack_type"] = df["attack_type"].replace({"upload": "tool_other", "webshell": "tool_other"})
+        guess = pd.Series([is_login_attempt(m, p, b) for m, p, b in zip(df["method"], df["path"], df["body"])],
+                          index=df.index)
+        df.loc[(df["attack_type"] == "bruteforce") & ~guess, "attack_type"] = "tool_other"
+        yield host, _with_proba(df, detector)
+
+
 def build(tools_dir="data/raw", zanbil_log="data/raw/zanbil_access.log", skip_sites=(), skip_families=(),
-          skip_real=(), raw_dir="data/raw"):
+          skip_real=(), raw_dir="data/raw", ait_hosts=AIT_TRAIN_HOSTS):
     """skip_sites / skip_families / skip_real: left out of training (leave-one-site-out /
     leave-one-tool-out / leave-one-real-log-out)."""
     detector = joblib.load(DETECTOR_PATH)
@@ -203,13 +228,18 @@ def build(tools_dir="data/raw", zanbil_log="data/raw/zanbil_access.log", skip_si
     for _, df in real_logs(raw_dir, detector, skip_real):
         F, d = context_features(df)
         X.append(F), y.append(training_target(d, F))
+    for _, df in ait_logs(detector, ait_hosts):
+        F, d = context_features(df)
+        X.append(F), y.append(training_target(d, F))
     X, y = pd.concat(X, ignore_index=True), pd.concat(y, ignore_index=True)
     keep = y.notna()                     # payload attacks are the detector's job
     return X[keep], y[keep]
 
 
 if __name__ == "__main__":
+    # python -m ml.train_context [tools_dir] [zanbil_log] [out_path]
     X, y = build(*sys.argv[1:3])
     print(y.value_counts().to_string())
-    joblib.dump(fit(X, y), MODEL_PATH)
-    print("saved", MODEL_PATH)
+    out = sys.argv[3] if len(sys.argv) > 3 else MODEL_PATH
+    joblib.dump(fit(X, y), out)
+    print("saved", out)

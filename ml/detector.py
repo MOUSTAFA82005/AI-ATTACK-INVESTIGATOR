@@ -24,6 +24,10 @@ from ml.features import user_values, value_features
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT / "models" / "detector.joblib"
+# Decision threshold on the detector's probability (v9). Chosen on DEV data before the sealed
+# test by the rule written in results/final_v9/PREREGISTRATION.md (Amendment 5):
+# eval/v9_threshold.py -> results/final_v9/threshold/THRESHOLD.md. Was 0.5 before v9.
+DETECTOR_THRESHOLD = 0.7
 
 # Features that only fire when a request carries something suspicious.
 _SIGNAL_PREFIXES = ("v_ctx_", "v_chr_", "v_kw", "p_", "v_sql", "v_taut", "v_crlf", "double", "null")
@@ -68,6 +72,13 @@ def detector_columns(X):
     return [c for c in X.columns if c != "text" and c not in NOT_FOR_DETECTOR]
 
 
+# Login / admin pages of the site itself (WordPress and a plain admin.php). When the site answers them
+# (2xx/3xx) they are real pages that ordinary users open, not a payload. Guessing passwords on them is
+# brute force, which the session layer judges. Backup copies (wp-login.php.bak, ...) are not matched.
+# v9: found on SR-BH dev, where 580 of 1,390 false alarms were plain visits to /blog/wp-login.php.
+_SITE_PAGE = re.compile(r"/(wp-login(\.php)?|wp-admin(/[^~]*)?|admin\.php)$")
+
+
 def served_files(df, X, pred):
     """Alarms that are only a download-like file name (.conf, .tar.gz, ...) that the site
     served (2xx/3xx, or 416 = range of an existing file) to an IP with no other alarm.
@@ -83,7 +94,9 @@ def served_files(df, X, pred):
     cand = pred & file_only & served & path.map(lambda p: p.endswith(DOWNLOAD_EXT)).values \
         & (X["p_probe_path"].values == 0)
     other_alarm = pd.Series(pred & ~cand, index=df.index).groupby(df["ip"].values).transform("any").values
-    return cand & ~other_alarm
+    # login/admin pages the site served: no IP condition, the page exists whoever opens it
+    page = pred & file_only & served & (X["p_probe_ext"].values == 0) & path.map(lambda p: bool(_SITE_PAGE.search(p))).values
+    return (cand & ~other_alarm) | page
 
 
 def build_pipeline(hand_cols, pos_weight=1.0, n_jobs=2, use_tfidf=False):

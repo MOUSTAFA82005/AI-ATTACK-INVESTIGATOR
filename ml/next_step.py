@@ -43,7 +43,11 @@ def session_steps(req):
     """
     flagged = req[(req["pred"] == 1) | (req["session_attack"] == 1)].sort_values(["session", "timestamp"],
                                                                                   kind="stable")
-    act = [t if p == 1 else _BEHAVIOUR_STEP.get(b, "")
+    # v9: a payload request that the behaviour model puts inside a scan is part of that scan.
+    # Scanners (nikto) fire sqli, xss, cmdi and traversal probes in one burst; read one by one
+    # they became 100+ alternating "steps" on a real log (AIT), which is the tool's own order,
+    # not the attacker's decisions.
+    act = ["scan" if b == "scan" else t if p == 1 else _BEHAVIOUR_STEP.get(b, "")
            for p, b, t in zip(flagged["pred"], flagged["behaviour"], flagged["type_pred"])]
     flagged = flagged.assign(_act=act)
     out = {}
