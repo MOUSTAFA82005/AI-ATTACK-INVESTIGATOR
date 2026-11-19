@@ -79,8 +79,11 @@ def reasons(detector, X, top=3, min_value=0.1):
     Rows it calls normal get an empty list."""
     values, names = contributions(detector, X)
     present = X[names].to_numpy(dtype=float) != 0
-    counts = X[KEYWORD_PARTS].to_numpy(dtype=float)
-    total, parts = names.index("v_kw_total"), [names.index(n) for n in KEYWORD_PARTS]
+    # Only the keyword columns the model was trained on: a detector can leave some out
+    # (the v9/v10 detectors drop p_probe_ext, see NOT_FOR_DETECTOR in ml/detector.py).
+    kw = [n for n in KEYWORD_PARTS if n in names]
+    counts = X[kw].to_numpy(dtype=float)
+    total, parts = names.index("v_kw_total"), [names.index(n) for n in kw]
     keep = [i for i, n in enumerate(names) if n not in NOT_A_REASON]
     out = []
     for r, row in enumerate(values):

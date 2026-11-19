@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app import main  # noqa: E402
 from ml.next_step import NextStepModel  # noqa: E402
+from backend.app import auth as auth_module  # noqa: E402
+from backend.app.auth import Auth, make_record, new_totp_secret  # noqa: E402
+from backend.app.db import Store  # noqa: E402
 
 
 # ---------- fakes ----------
@@ -71,6 +74,12 @@ def client(monkeypatch):
     # Never depend on the model files that happen to exist on this machine.
     monkeypatch.setattr(main, "next_step_model", None)
     monkeypatch.setattr(main, "block_tree", None)
+    # Login is tested in tests/test_auth.py; here every request counts as logged in, and
+    # saved investigations go to an in-memory database.
+    store = Store(":memory:")
+    uid = store.add_user("tester", make_record("tester-password"), new_totp_secret(), status="active")
+    monkeypatch.setattr(auth_module, "auth", Auth(store))
+    monkeypatch.setitem(main.app.dependency_overrides, main.require_user, lambda: {"id": uid, "username": "tester"})
     c = TestClient(main.app)
     c.seen = seen
     c.calls = calls
@@ -559,3 +568,19 @@ def test_quiet_mode_on_investigate(client):
 def test_unknown_mode_is_rejected(client):
     r = client.post("/analyze?mode=loud", files={"file": ("t.log", BORDERLINE.encode(), "text/plain")})
     assert r.status_code == 400 and "sensitive" in r.json()["detail"]
+
+
+def test_missing_page_shows_404_page_to_browsers(client):
+    r = client.get("/no-such-page", headers={"accept": "text/html,application/xhtml+xml"})
+    assert r.status_code == 404
+    assert "text/html" in r.headers["content-type"]
+    assert "falcon.js" in r.text
+    assert "Content-Security-Policy" in r.headers
+
+
+def test_missing_api_route_keeps_json_404(client):
+    r = client.get("/no-such-page", headers={"accept": "application/json"})
+    assert r.status_code == 404
+    assert r.json() == {"detail": "Not Found"}
+    r = client.get("/static/nope.js", headers={"accept": "text/html"})
+    assert r.status_code == 404 and "falcon.js" not in r.text

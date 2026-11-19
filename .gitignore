@@ -25,3 +25,10 @@ Thumbs.db
 .idea/
 
 data/labels/
+
+
+# Dashboard accounts and saved investigations (SQLite)
+var/
+
+# Local admin password hash (old single-admin setup) and other machine settings
+config/

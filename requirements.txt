@@ -12,3 +12,4 @@ matplotlib
 jupyter
 httpx
 pytest
+segno

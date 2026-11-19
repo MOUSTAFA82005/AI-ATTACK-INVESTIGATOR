@@ -1,0 +1,19 @@
+/* The 404 page: one glass card with the falcon looking around. */
+.lost { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 32px 16px; }
+.lost .brand { align-self: center; }
+.lost-card { width: min(560px, 100%); padding: 40px 36px 32px; text-align: center; border-radius: var(--r-xl); overflow: hidden; }
+.lost-card::before { content: ""; position: absolute; width: 420px; height: 420px; left: 50%; top: -260px; transform: translateX(-50%); border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(143, 155, 255, .35), transparent); }
+.lost-card > * { position: relative; }
+.lost-falcon { width: 128px; height: 128px; margin: 0 auto; filter: drop-shadow(0 16px 36px rgba(143, 155, 255, .35)); animation: lost-look 7s ease-in-out infinite; }
+.lost-falcon .falcon { width: 100%; height: 100%; }
+@keyframes lost-look { 0%, 100% { transform: rotate(0) translateY(0); } 30% { transform: rotate(-4deg) translateY(-6px); } 65% { transform: rotate(3deg) translateY(-3px); } }
+.lost-code { font-size: clamp(64px, 16vw, 104px); font-weight: 800; line-height: 1; margin: 12px 0 6px; letter-spacing: -.04em; }
+.lost-card h1 { font-size: clamp(22px, 5vw, 28px); font-stretch: 90%; }
+.lost-text { color: var(--muted); margin: 10px auto 24px; max-width: 30em; }
+.lost-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.lost-log { margin: 26px 0 0; padding: 12px 14px; border-radius: 12px; background: rgba(0, 0, 0, .35); border: 1px solid var(--line);
+  font: 12.5px/1.5 var(--mono, ui-monospace, monospace); color: var(--muted); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lost-log .lost-path { color: var(--text); }
+.lost-log b { color: #ff8da2; }
+@media (prefers-reduced-motion: reduce) { .lost-falcon { animation: none; } }

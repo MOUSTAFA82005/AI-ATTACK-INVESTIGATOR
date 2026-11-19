@@ -1,0 +1,14 @@
+.git
+.venv
+data
+results
+notebooks
+lab
+eval
+tests
+config
+var
+models/v8_backup
+models/v9_frozen
+**/__pycache__
+*.log

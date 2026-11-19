@@ -1,4 +1,5 @@
 """FastAPI backend for the AI Attack Investigator."""
+import os
 import sys
 from pathlib import Path
 
@@ -6,8 +7,14 @@ import joblib
 import numpy as np
 import pandas as pd
 from collections import Counter
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+import time
+from urllib.parse import urlsplit
+
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.exception_handlers import http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -22,6 +29,8 @@ from ml.defense import FixFinder, add_defense, load_block_rules  # noqa: E402
 from ml.outliers import unusual_requests  # noqa: E402
 from ml.explain import reasons  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
+from backend.app.auth import bootstrap_from_env, get_auth, require_user  # noqa: E402
+from backend.app import accounts, history  # noqa: E402
 
 app = FastAPI(title="AI Attack Investigator")
 FRONTEND = ROOT / "frontend"
@@ -37,9 +46,57 @@ block_tree = load_block_rules()             # models/block_rules.joblib
 fix_finder = FixFinder()                    # k-NN over the knowledge base, built once
 
 
-@app.get("/")
-def index():
-    return FileResponse(FRONTEND / "index.html")
+if os.environ.get("AAI_ADMIN_USER"):         # hosted demo only; on a laptop use: python -m backend.app.auth create
+    bootstrap_from_env(get_auth().store)
+
+
+# ------------------------------------------------------------------ pages and security headers
+# The pages hold no data: they ask the API, which checks the login on every call.
+PAGES = {"/": "index.html", "/login": "login.html", "/signup": "login.html", "/app": "app.html"}
+for _path, _file in PAGES.items():
+    app.add_api_route(_path, (lambda f=_file: FileResponse(FRONTEND / f)), methods=["GET"], include_in_schema=False)
+app.mount("/static", StaticFiles(directory=FRONTEND / "static"), name="static")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def not_found_page(request: Request, exc: StarletteHTTPException):
+    """A browser that opens a page that does not exist gets the 404 page; API callers keep the JSON error."""
+    wants_page = (exc.status_code == 404 and request.method == "GET"
+                  and not request.url.path.startswith("/static/")
+                  and "text/html" in request.headers.get("accept", ""))
+    if wants_page:
+        return FileResponse(FRONTEND / "404.html", status_code=404)
+    return await http_exception_handler(request, exc)
+app.include_router(accounts.router)
+app.include_router(history.router)
+
+SECURITY_HEADERS = {
+    # Only this server's own files: no inline scripts, no other sites, no framing.
+    "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                                "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+                                "form-action 'self'; frame-ancestors 'none'"),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+
+
+@app.middleware("http")
+async def security(request: Request, call_next):
+    # A request that changes something must come from this site's own pages (the cookie is
+    # SameSite=Strict already; this also stops other local pages from posting to us).
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != request.url.netloc:
+            return JSONResponse({"detail": "Cross-site request refused."}, status_code=403)
+    response = await call_next(request)
+    for k, v in SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    if request.url.path.startswith(("/api/", "/me", "/investigate", "/analyze", "/login", "/signup")):
+        response.headers["Cache-Control"] = "no-store"      # results never stay in the browser cache
+    return response
 
 
 @app.get("/health")
@@ -111,7 +168,7 @@ async def _read_and_predict(file: UploadFile, threshold=MODES["sensitive"]):
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive")):
+async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive"), user=Depends(require_user)):
     """Read an access log and mark each request as normal or attack.
 
     mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8: fewer false alarms, misses more)."""
@@ -164,11 +221,13 @@ _REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body
                     "attack_prob", "label", "row"]
 
 @app.post("/investigate")
-async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive")):
+async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive"), save: bool = Query(True),
+                      user=Depends(require_user)):
     """Group the requests of a log into sessions (one IP, gaps under 30 min) and score each one.
 
     mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8), as in /analyze."""
     threshold = _threshold(mode)
+    started = time.monotonic()
     rows, skipped, fmt = await _read_and_predict(file, threshold)
 
     result = {
@@ -184,7 +243,7 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
         "sessions": [],
     }
     if not rows:
-        return result
+        return _finish(result, user, save, started)
 
     # Input for analyze_sessions: one row per request, pred = the model's decision.
     df = pd.DataFrame(rows).assign(row=range(len(rows)))[_REQUEST_COLUMNS]
@@ -255,4 +314,14 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
     result["sessions_total"] = len(out)
     result["sessions_flagged"] = sum(s["risk_score"] > 0 for s in out)
     result["sessions"] = out
+    return _finish(result, user, save, started)
+
+
+def _finish(result, user, save, started):
+    """Save the (already masked) result for this user, so it appears in History and on Home."""
+    seconds = time.monotonic() - started
+    result["seconds"] = round(seconds, 1)
+    if save:
+        result["id"] = get_auth().store.save_investigation(
+            user["id"], result["filename"], history.summarize(result, seconds), result)
     return result

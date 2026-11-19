@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · AI Attack Investigator</title>
+<link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/auth.css">
+<script src="/static/js/fx.js" defer></script>
+<script src="/static/js/falcon.js" defer></script>
+<script src="/static/js/ui.js" defer></script>
+<script src="/static/js/auth.js" defer></script>
+</head>
+<body>
+<div class="auth">
+  <aside class="auth-side glass lit">
+    <a class="brand" href="/">
+      <img class="mark" src="/static/img/mark.svg" width="38" height="38" alt="">
+      AI Attack Investigator
+    </a>
+    <div class="side-copy">
+      <h1>Every attacker leaves a <span class="grad-text">trail</span> in the log.</h1>
+      <p>Log in to upload a log, follow each visitor, and see what to block and fix.</p>
+    </div>
+    <ul class="side-facts">
+      <li><strong>Two-step login.</strong> Password, then a code from your authenticator app.</li>
+      <li><strong>Approved accounts only.</strong> New accounts wait for the project team.</li>
+      <li><strong>Private results.</strong> You only ever see your own investigations.</li>
+    </ul>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-card glass lit">
+      <div class="side-falcon" id="side-falcon" data-falcon="watch" aria-hidden="true"></div>
+      <div class="tabs" role="tablist" aria-label="Account">
+        <a href="/login" role="tab" id="tab-login">Log in</a>
+        <a href="/signup" role="tab" id="tab-signup">Request access</a>
+      </div>
+
+      <!-- Log in, step 1 -->
+      <form class="view" id="v-login" novalidate>
+        <h2>Welcome back</h2>
+        <div class="field"><label for="l-user">User name</label>
+          <input class="input" id="l-user" autocomplete="username" required maxlength="64"></div>
+        <div class="field"><label for="l-pass">Password</label>
+          <input class="input" id="l-pass" type="password" autocomplete="current-password" required maxlength="512"></div>
+        <button class="btn btn-primary btn-wide" type="submit">Continue</button>
+        <div class="notice" role="alert" hidden></div>
+      </form>
+
+      <!-- Log in, step 2 -->
+      <form class="view" id="v-code" novalidate hidden>
+        <h2>Enter your code</h2>
+        <p class="hint">Open your authenticator app and type the 6-digit code for AI Attack Investigator.</p>
+        <div class="field"><label for="l-code" class="sr-only">6-digit code</label>
+          <input class="input code" id="l-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" required></div>
+        <button class="btn btn-primary btn-wide" type="submit">Log in</button>
+        <button class="btn-link" type="button" data-back="v-login">Use a different account</button>
+        <div class="notice" role="alert" hidden></div>
+      </form>
+
+      <!-- Sign up, step 1 -->
+      <form class="view" id="v-signup" novalidate hidden>
+        <h2>Request access</h2>
+        <p class="hint">Choose a user name and password. Next you will set up two-factor login.</p>
+        <div class="field"><label for="s-user">User name</label>
+          <input class="input" id="s-user" autocomplete="username" required maxlength="32">
+          <span class="help">3 to 32 letters, digits, dots, dashes or underscores.</span></div>
+        <div class="field"><label for="s-pass">Password</label>
+          <input class="input" id="s-pass" type="password" autocomplete="new-password" required maxlength="256">
+          <span class="help">At least 10 characters. A short sentence is easy to remember.</span></div>
+        <div class="field"><label for="s-pass2">Repeat the password</label>
+          <input class="input" id="s-pass2" type="password" autocomplete="new-password" required maxlength="256"></div>
+        <button class="btn btn-primary btn-wide" type="submit">Continue to two-factor setup</button>
+        <div class="notice" role="alert" hidden></div>
+      </form>
+
+      <!-- Sign up, step 2 -->
+      <form class="view" id="v-setup" novalidate hidden>
+        <h2>Set up two-factor login</h2>
+        <ol class="setup-steps">
+          <li>Open an authenticator app (Google Authenticator, Microsoft Authenticator, 2FAS…).</li>
+          <li>Scan this code, or type the key below.</li>
+          <li>Type the 6-digit code the app shows.</li>
+        </ol>
+        <div class="qr"><img id="qr-img" alt="QR code for your authenticator app" hidden></div>
+        <div class="key"><span>Key</span><code id="qr-key"></code></div>
+        <div class="field"><label for="s-code" class="sr-only">6-digit code</label>
+          <input class="input code" id="s-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*" required></div>
+        <button class="btn btn-primary btn-wide" type="submit">Confirm code</button>
+        <div class="notice" role="alert" hidden></div>
+      </form>
+
+      <!-- Sign up, done -->
+      <div class="view" id="v-done" hidden>
+        <h2>Request sent</h2>
+        <p class="hint">Your account and two-factor login are ready. You can log in as soon as the project team approves the account.</p>
+        <a class="btn btn-ghost btn-wide" href="/login">Back to log in</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
