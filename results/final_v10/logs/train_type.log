@@ -1,0 +1,3 @@
+SR-BH rows by type: {'sqli': 5000, 'traversal': 5000, 'cmdi': 2501}
+training on {'sqli': 21052, 'traversal': 7366, 'scan': 4614, 'cmdi': 4253, 'xss': 2675, 'ldap': 1796, 'xpath': 1784, 'ssti': 828, 'ssrf': 268, 'nosql': 231, 'xxe': 220, 'log4shell': 210}
+saved C:\Users\ms182\Downloads\AI PROJECT\AI-ATTACK-INVESTIGATOR\models\attack_type.joblib

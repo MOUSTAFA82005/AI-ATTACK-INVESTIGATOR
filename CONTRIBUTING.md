@@ -11,11 +11,13 @@
 5. Never commit directly to `main`.
 6. Folder ownership (to avoid conflicts):
    - Elsharawy: `lab/`, `data/`, `frontend/` (lab, traffic generator, label files, UI)
-   - Safi: `ml/`, `eval/`, `notebooks/` (models and experiments)
+   - Safi: `ml/`, `eval/`, `results/`, `notebooks/` (models, experiments, frozen results)
    - Mariam: `backend/`, `tests/` (API and its tests)
 7. Notebooks: one per person, named with your name, e.g. `notebooks/safi_baseline.ipynb`.
    Code you want to reuse moves into a `.py` file in `ml/`.
-8. Never commit data, logs or saved models (`.gitignore` blocks them).
+8. Never commit data, logs, saved models, `config/` (e-mail password) or `var/` (accounts database). `.gitignore` blocks them.
+9. Never edit anything under `results/final_v*/` after its sealed run, and never open `data/sealed/`.
+10. Code, comments and docs are written in English.
 
 ## First time
 ```powershell

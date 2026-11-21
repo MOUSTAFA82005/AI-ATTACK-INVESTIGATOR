@@ -1,0 +1,10 @@
+spiral scan rows 6296 distinct UAs 5776 distinct UAs without digits 25
+spiral bruteforce rows 137 distinct UAs 1 distinct UAs without digits 1
+spiral default {'scan': 0.17, 'bruteforce': 0.0, 'normal flagged': 4}
+spiral no UA split {'scan': 0.998, 'bruteforce': 1.0, 'normal flagged': 15}
+spiral no no-size rule {'scan': 0.17, 'bruteforce': 0.0, 'normal flagged': 4}
+spiral UA without digits {'scan': 0.992, 'bruteforce': 0.993, 'normal flagged': 4}
+insect scan rows 6296 distinct UAs 5776 distinct UAs without digits 25
+insect bruteforce rows 90 distinct UAs 1 distinct UAs without digits 1
+insect default {'scan': 0.164, 'bruteforce': 0.0, 'normal flagged': 14}
+insect no UA split {'scan': 1.0, 'bruteforce': 1.0, 'normal flagged': 197}

@@ -1,0 +1,7 @@
+log,requests,skipped lines,flagged ML,flagged rules,flagged ML n,flagged rules n,sessions,sessions flagged ML,sessions flagged rules,hand-label sample
+zanbil_9.0-9.2M,200000,0,0.0003,0.0036,57,726,4927,22,22,57
+secrepo_2024-10-03,25483,0,0.0015,0.0026,39,67,305,4,4,39
+secrepo_2024-10-10,39549,0,0.0,0.0094,1,370,368,1,11,1
+secrepo_2024-10-15,37454,0,0.0001,0.0023,3,85,320,2,6,3
+secrepo_2025-04-22,10217,0,0.0661,0.0785,675,802,1181,4,21,200
+secrepo_2026-06-01,19251,0,0.0237,0.0158,456,305,563,6,4,200

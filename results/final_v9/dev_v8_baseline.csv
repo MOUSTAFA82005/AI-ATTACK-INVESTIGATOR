@@ -1,0 +1,5 @@
+detector,attacks,caught,recall vs CRS,normals,normals flagged,false-alarm rate,precision vs CRS,data,requests,requests flagged,IPs,IPs flagged (headline)
+ML (v8),382619.0,382613.0,1.0,213434.0,164637.0,0.7714,0.699,srbh,,,,
+rules,382619.0,358254.0,0.936,213434.0,184877.0,0.8662,0.66,srbh,,,,
+ML (v8),,,,,,,,glastopf,4334.0,0.481,882.0,0.207
+rules,,,,,,,,glastopf,4334.0,0.42,882.0,0.132

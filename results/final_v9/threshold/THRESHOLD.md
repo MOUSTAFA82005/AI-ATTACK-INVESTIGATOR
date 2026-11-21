@@ -1,0 +1,16 @@
+# Detector threshold on DEV data: `models\detector_v9_holdout2.joblib`
+
+SR-BH held-out days 2020-07-19, 2020-07-23, 2020-07-24; zanbil lines 3,000,001-3,200,000; Glastopf from 2015-01-01; lab run7.
+Per request, detector + served-files rule, no sessions. FA probe-like = CRS-normal requests for backup/archive/config file names or with unusual methods: CRS may have missed these, so part of that column may be real attacks.
+
+| threshold | SR-BH recall | SR-BH FA | SR-BH FA probe-like | SR-BH FA other | Glastopf IPs flagged | zanbil flagged | lab payload recall | lab FA normal users |
+|---|---|---|---|---|---|---|---|---|
+| 0.3 | 0.668 | 0.0166 | 0.0063 | 0.0104 | 0.198 | 0.00033 | 0.991 | 0 |
+| 0.4 | 0.666 | 0.0144 | 0.005 | 0.0094 | 0.196 | 0.00032 | 0.991 | 0 |
+| 0.5 | 0.665 | 0.0142 | 0.005 | 0.0091 | 0.193 | 0.00025 | 0.99 | 0 |
+| 0.6 | 0.664 | 0.0139 | 0.005 | 0.0089 | 0.193 | 0.00019 | 0.988 | 0 |
+| 0.7 | 0.663 | 0.0139 | 0.005 | 0.0088 | 0.193 | 0.00017 | 0.987 | 0 |
+| 0.8 | 0.599 | 0.0005 | 0.0 | 0.0005 | 0.101 | 0.00015 | 0.986 | 0 |
+| 0.9 | 0.597 | 0.0005 | 0.0 | 0.0005 | 0.101 | 0.00014 | 0.981 | 0 |
+| 0.95 | 0.579 | 0.0005 | 0.0 | 0.0005 | 0.101 | 0.00014 | 0.978 | 0 |
+| payload rules | 0.352 | 0.0002 | 0.0002 | 0.0 | 0.098 | 0.00016 | 0.874 | 0 |

@@ -1,0 +1,28 @@
+{'set': 'ModSec-WP half 1: normal', 'rows': 4902, 'detector flagged': 0.1603, 'detector_v10 flagged': 0.0131}
+{'set': 'ModSec-WP half 1: normal login POSTs', 'rows': 56, 'detector flagged': 1.0, 'detector_v10 flagged': 0.0}
+{'set': 'ModSec-WP half 1: sqli', 'rows': 34641, 'detector flagged': 0.9863, 'detector_v10 flagged': 0.9864}
+{'set': 'ModSec-WP half 1: xss', 'rows': 3972, 'detector flagged': 0.9741, 'detector_v10 flagged': 0.9753}
+{'set': 'ModSec-WP half 1: fileinclusion', 'rows': 3244, 'detector flagged': 0.9531, 'detector_v10 flagged': 0.9716}
+{'set': 'ModSec-WP half 1: rce', 'rows': 2235, 'detector flagged': 0.6456, 'detector_v10 flagged': 0.7409}
+{'set': 'ModSec-WP half 1: bruteforce', 'rows': 3884, 'detector flagged': 1.0, 'detector_v10 flagged': 0.0}
+{'set': 'Indonesian (300k sample): normal', 'rows': 299779, 'detector flagged': 0.0004, 'detector_v10 flagged': 0.0005}
+{'set': 'Indonesian (300k sample): rule attacks', 'rows': 221, 'detector flagged': 0.1176, 'detector_v10 flagged': 0.1176}
+{'set': 'SR-BH sealed days: normal', 'rows': 311759, 'detector flagged': 0.0, 'detector_v10 flagged': 0.0}
+{'set': 'zanbil 10.0M: all', 'rows': 200000, 'detector flagged': 0.0001, 'detector_v10 flagged': 0.0001}
+{'set': 'Glastopf sealed: requests', 'rows': 2865, 'detector flagged': 0.0419, 'detector_v10 flagged': 0.0419}
+# v10 dev: payload detector, share flagged at threshold 0.7
+
+| set | rows | detector flagged | detector_v10 flagged |
+|---|---|---|---|
+| ModSec-WP half 1: normal | 4902 | 0.1603 | 0.0131 |
+| ModSec-WP half 1: normal login POSTs | 56 | 1.0 | 0.0 |
+| ModSec-WP half 1: sqli | 34641 | 0.9863 | 0.9864 |
+| ModSec-WP half 1: xss | 3972 | 0.9741 | 0.9753 |
+| ModSec-WP half 1: fileinclusion | 3244 | 0.9531 | 0.9716 |
+| ModSec-WP half 1: rce | 2235 | 0.6456 | 0.7409 |
+| ModSec-WP half 1: bruteforce | 3884 | 1.0 | 0.0 |
+| Indonesian (300k sample): normal | 299779 | 0.0004 | 0.0005 |
+| Indonesian (300k sample): rule attacks | 221 | 0.1176 | 0.1176 |
+| SR-BH sealed days: normal | 311759 | 0.0 | 0.0 |
+| zanbil 10.0M: all | 200000 | 0.0001 | 0.0001 |
+| Glastopf sealed: requests | 2865 | 0.0419 | 0.0419 |

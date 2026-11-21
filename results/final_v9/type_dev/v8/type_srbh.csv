@@ -1,0 +1,5 @@
+CRS type,requests,ML agrees,rules agree
+cmdi,157,0.745,0.0
+sqli,16774,0.244,0.0
+traversal,964,0.399,0.556
+all,17895,0.257,0.03

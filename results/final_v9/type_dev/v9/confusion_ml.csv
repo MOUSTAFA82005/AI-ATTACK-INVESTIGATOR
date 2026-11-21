@@ -1,0 +1,4 @@
+truth,cmdi,ldap,nosql,sqli,ssrf,ssti,traversal,xpath
+cmdi,140,7,1,0,0,1,1,7
+sqli,24,1,0,16736,1,0,12,0
+traversal,25,0,0,0,0,0,939,0

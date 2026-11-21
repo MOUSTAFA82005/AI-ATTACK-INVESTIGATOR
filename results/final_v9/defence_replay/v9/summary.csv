@@ -1,0 +1,5 @@
+host,who,blocked at,attack requests after block,bruteforce stopped,upload stopped,webshell stopped,action on attacker at end,other users' sessions blocked,other users' sessions rate-limited,other users' sessions
+onion,ML,2020-03-04 18:46:13+00:00,0.971,True,True,True,block,0,0,23
+onion,rules,2020-03-04 18:46:13+00:00,0.971,True,True,True,block,0,0,23
+spiral,ML,2020-03-04 18:02:05+00:00,0.953,True,True,True,block,1,0,47
+spiral,rules,2020-03-04 18:02:05+00:00,0.953,True,True,True,block,0,1,47

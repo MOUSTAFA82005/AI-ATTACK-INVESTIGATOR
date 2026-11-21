@@ -1,0 +1,8 @@
+git : Preparing worktree (detached HEAD 4f046f8)
+At line:1 char:333
++ ... 10_v9tree"; git worktree add $W v9.0-final-test *> results\v10_worktr ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Preparing workt...d HEAD 4f046f8):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+HEAD is now at 4f046f8 v9 final models: hashes before the sealed test

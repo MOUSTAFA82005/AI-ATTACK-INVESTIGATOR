@@ -1,0 +1,11 @@
+adding 20712 HttpParams values (7842 attacks)
+adding 2166 requests with new-family payloads {'ssti': 828, 'ssrf': 268, 'nosql': 231, 'xxe': 220, 'log4shell': 210, 'xpath': 209, 'ldap': 200}
+dropping 10430 anomalies with no attack payload
+adding 45652 lab requests (14061 attacks)
+adding 60000 real normal requests (zanbil)
+adding SR-BH days 2020-07-17..2020-07-24: 40000 attacks with a payload (of 120000 distinct sampled), 60000 normal
+adding Glastopf before 2015-04-01: 651 distinct requests with a payload
+adding ModSec-WP half 0: {'normal': 598, 'rce': 283, 'xss': 637, 'fileinclusion': 433, 'sqli': 1500}
+training on 247810 requests (73107 attacks, 174703 normal)...
+done in 3s
+saved C:\Users\ms182\Downloads\AI PROJECT\AI-ATTACK-INVESTIGATOR\models\detector_v10.joblib

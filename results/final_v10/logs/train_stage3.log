@@ -1,0 +1,18 @@
+juiceshop st21 {'intrusion': 1238, 'recon': 926, 'data_theft': 533, 'exploitation': 17}
+dvwa st21 {'recon': 1413, 'intrusion': 910, 'exploitation': 274, 'data_theft': 82}
+juiceshop st22 {'intrusion': 1200, 'recon': 954, 'data_theft': 758, 'exploitation': 9}
+dvwa st22 {'recon': 1622, 'intrusion': 867, 'exploitation': 254, 'data_theft': 69}
+bwapp st31 {'recon': 1296, 'intrusion': 1127, 'data_theft': 196, 'exploitation': 147}
+mutillidae st31 {'recon': 1367, 'intrusion': 1085, 'exploitation': 210}
+dvna st31 {'recon': 1395, 'intrusion': 1148, 'exploitation': 204}
+vampi st31 {'intrusion': 1269, 'recon': 1183, 'data_theft': 331, 'exploitation': 47}
+dvga st31 {'intrusion': 1208, 'data_theft': 819, 'recon': 675, 'exploitation': 42}
+bwapp st32 {'recon': 1489, 'intrusion': 1028, 'data_theft': 145, 'exploitation': 139}
+mutillidae st32 {'recon': 1579, 'intrusion': 949, 'exploitation': 205}
+dvna st32 {'recon': 1552, 'intrusion': 1063, 'exploitation': 178}
+vampi st32 {'recon': 1191, 'intrusion': 1104, 'data_theft': 532, 'exploitation': 36}
+dvga st32 {'intrusion': 1083, 'data_theft': 888, 'recon': 793, 'exploitation': 39}
+AIT cup {'recon': 3000, 'intrusion': 143, 'exploitation': 1}
+AIT insect {'recon': 3000, 'intrusion': 89, 'exploitation': 1}
+training on {'recon': 23435, 'intrusion': 15511, 'data_theft': 4353, 'exploitation': 1803}
+saved models/stage.joblib

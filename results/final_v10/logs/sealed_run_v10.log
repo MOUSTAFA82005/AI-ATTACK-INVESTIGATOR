@@ -1,0 +1,18 @@
+  ok  models/detector.joblib
+  ok  models/context.joblib
+  ok  models/attack_type.joblib
+  ok  models/stage.joblib
+  ok  models/block_rules.joblib
+  ok  models/next_step.json
+  v10 clarknet clarknet: 300000 rows (293s)
+  v10 usask usask: 300000 rows (863s)
+  v10 nasa nasa: 300000 rows (1173s)
+  v10 zanbil zanbil_5.0M: 200000 rows (1369s)
+  v10 zanbil zanbil_8.0M: 200000 rows (1526s)
+  v10 secrepo 2026-10-25: 382 rows (1530s)
+  v10 secrepo 2026-10-26: 3892 rows (1534s)
+  v10 secrepo 2026-10-27: 960 rows (1537s)
+  v10 secrepo 2026-10-29: 315 rows (1539s)
+  v10 secrepo 2026-10-30: 514 rows (1542s)
+  v10 secrepo 2026-10-31: 1354 rows (1544s)
+v10 done in 1544s

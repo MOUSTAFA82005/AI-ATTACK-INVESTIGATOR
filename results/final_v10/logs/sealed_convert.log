@@ -1,0 +1,16 @@
+  ok  access.log.2026-10-25.gz
+  ok  access.log.2026-10-26.gz
+  ok  access.log.2026-10-27.gz
+  ok  access.log.2026-10-29.gz
+  ok  access.log.2026-10-30.gz
+  ok  access.log.2026-10-31.gz
+  ok  clarknet_access_log_Aug28.gz
+  ok  NASA_access_log_Aug95.gz
+  ok  usask_access_log.gz
+  ok  zanbil_5.0M.log
+  ok  zanbil_8.0M.log
+  clarknet: 300000 rows
+  usask: 300000 rows
+  nasa: 300000 rows
+  zanbil: 400000 rows
+  secrepo: 7417 rows

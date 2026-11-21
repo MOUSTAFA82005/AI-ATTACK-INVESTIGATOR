@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.pyc
 .venv/
 venv/
@@ -16,7 +17,8 @@ data/sealed/
 # Saved models
 *.joblib
 *.pkl
-models/*.json
+models/**/*.json
+results/**/*.tgz
 
 # OS / editors
 .DS_Store
@@ -24,11 +26,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-data/labels/
-
 
 # Dashboard accounts and saved investigations (SQLite)
 var/
 
-# Local admin password hash (old single-admin setup) and other machine settings
+# Machine settings (e-mail password, mail.env)
 config/
