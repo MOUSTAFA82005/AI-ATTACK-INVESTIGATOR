@@ -162,6 +162,10 @@ def stage_features(req):
         f["type_" + t] = (types == t).astype(int)
     f["probe"] = probe_only(req).astype(int)
     X, _ = context_features(req.assign(proba=req["proba"] if "proba" in req else req["pred"].astype(float)))
+    # context_features returns its rows sorted by visitor and time (same index labels): put them back in
+    # req's order. Without this the rows were misaligned whenever req was in another order (the app
+    # sorts requests by time before this step; eval/final_test.py did not, so its numbers were right).
+    X = X.reindex(req.index)
     for c in ["page_popularity", "answer_pages_log", "same_page_in_session", "ids_this_resource",
               "attempts_this_form", "form_same_answer", "s_requests"]:
         f[c] = X[c].values

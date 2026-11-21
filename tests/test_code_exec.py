@@ -67,3 +67,12 @@ def test_code_execution_is_blocked_even_once():
     assert out.loc["s0", "action"] == "block"
     assert "run code" in out.loc["s0", "action_reason"] or out.loc["s0", "risk_level"] == "high"
     assert out.loc["s1", "action"] == "allow"                 # one SQLi-looking request: unchanged
+
+
+def test_app_uses_the_learned_behaviour_model():
+    """The app runs the system the results tables measured: payload model + learned sessions."""
+    import pytest
+    from backend.app import main
+    if not (main.ROOT / "models" / "context.joblib").exists():
+        pytest.skip("no context model")
+    assert main.context_model is not None

@@ -30,6 +30,7 @@ if _loaded:
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
 from ml.detector import MODES, MODEL_PATH, served_files, to_frame  # noqa: E402
 from ml.sessions import analyze_sessions  # noqa: E402
+from ml.context_model import load_context_model  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
 from ml.stage import add_stages  # noqa: E402
 from ml.next_step import NextStepModel, add_next_steps  # noqa: E402
@@ -56,6 +57,11 @@ MAX_SAVED = 500                    # ... and saved investigations per account
 # Loaded once at startup. Train it first with: python -m ml.train_detector
 detector = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 type_model = load_type_model()
+# The learned behaviour model (brute force / enumeration / scan). It is the "sessions" part of the
+# system that every results table measured ("model + sessions", eval/final_test.py); without the
+# file the hand-written session rules (the baseline) decide.
+_CONTEXT_PATH = ROOT / "models" / "context.joblib"
+context_model = load_context_model(_CONTEXT_PATH) if _CONTEXT_PATH.exists() else None
 # Both are None when the model file is missing; the endpoints still work without them.
 next_step_model = NextStepModel.load()      # models/next_step.json
 block_tree = load_block_rules()             # models/block_rules.joblib
@@ -232,6 +238,7 @@ def _predict(raw, threshold=MODES["sensitive"]):
 
         for r, p, is_attack, odd, sentences, was_served, is_probe in zip(rows, probs, pred, unusual, why, served, probe):
             r["attack_prob"] = round(float(p), 3)
+            r["_proba"] = float(p)              # unrounded, for the session and defence layers (not returned)
             r["label"] = "attack" if is_attack else "normal"
             r["unusual"] = bool(odd)
             r["known_probe"] = bool(is_probe)
@@ -252,6 +259,7 @@ async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive"), 
 
     # Mask AFTER the model has seen the original text, so detection does not change.
     for r in rows:
+        r.pop("_proba", None)
         r["body"] = mask_secrets(r["body"])
         r["path"] = mask_path(r["path"])
 
@@ -292,8 +300,10 @@ def _clean(value):
 
 # "row" = the position of the request in `rows`; it lets us find the unusual mark and the
 # reasons of a request again after analyze_sessions has re-ordered everything.
-_REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body",
-                    "attack_prob", "label", "known_probe", "row"]
+# user_agent: a visitor is IP + user agent (v10, ml/sessions.py visitor_key) and crawlers are told apart
+# by it; without this column every visitor behind one IP was merged into one session.
+_REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body", "user_agent",
+                    "attack_prob", "_proba", "label", "known_probe", "row"]
 
 @app.post("/investigate")
 async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive"), save: bool = Query(True),
@@ -332,7 +342,9 @@ def _investigate(raw, threshold, filename, mode):
     # Input for analyze_sessions: one row per request, pred = the model's decision.
     df = pd.DataFrame(rows).assign(row=range(len(rows)))[_REQUEST_COLUMNS]
     df["pred"] = (df["label"] == "attack").astype(int)
-    sessions, reqs = analyze_sessions(df)
+    df["proba"] = df.pop("_proba")                       # input of the behaviour model, as in eval/final_test.py
+    df["attack_prob"] = df["proba"]                        # defence rules use the unrounded value too
+    sessions, reqs = analyze_sessions(df, context_model)
 
     # Requests in time order. Rows without a readable time go last; ties keep file order.
     reqs = reqs.assign(_t=pd.to_datetime(reqs["timestamp"], utc=True, errors="coerce"))
@@ -379,7 +391,7 @@ def _investigate(raw, threshold, filename, mode):
                     "path": mask_path(r["path"]),          # mask AFTER prediction and analysis
                     "status": r["status"],
                     "body": mask_secrets(r["body"]),
-                    "attack_prob": r["attack_prob"],
+                    "attack_prob": round(r["attack_prob"], 3),
                     "label": r["label"],
                     "session_attack": r["session_attack"],
                     "is_attack": r["label"] == "attack" or r["session_attack"] == 1,
