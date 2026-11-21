@@ -1,0 +1,4 @@
+# v11 sealed test models, frozen 2026-11-21 05:30Z, code commit: see tag v11.0-final-test
+# detector.joblib = frozen v10 detector (same hash as results/final_v10/model_hashes.txt), detector_v11.joblib = v11
+58fdd01ab9ccde7dd84f55ba9f2560a52add44d51b1884bfb84b7ea7a2a49b47  models/detector.joblib
+e4edb3963bfe14eeb9fd091ac89475f021c578a736a73083f9386161782b9139  models/detector_v11.joblib

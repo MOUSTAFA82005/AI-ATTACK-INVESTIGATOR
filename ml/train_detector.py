@@ -43,6 +43,11 @@ test used, now dev): its normal WordPress requests and capped payload attacks. H
 (eval/v10_payload_dev.py).
 
     python -m ml.train_detector --v10 --out models/detector_v10.joblib
+
+v11 (results/final_v11/PREREGISTRATION.md): `--v11 train` = v10 data + Biblio-US17 Jan-Apr (dev check on May);
+`--v11 train,holdout` = the final v11 model (Jan-May). The sealed June-July part is never read here.
+
+    python -m ml.train_detector --v11 train --out models/detector_v11_try1.joblib
 """
 import argparse
 import os
@@ -192,14 +197,42 @@ def load_modsecwp(half=0):
     return (pd.concat([p[0] for p in parts], ignore_index=True), pd.concat([p[1] for p in parts], ignore_index=True))
 
 
+V11_DIR = ROOT / "data" / "processed" / "v11"
+BIBLIO_FAMILY_CAP = 20      # at most this many attacks per family (one burst of 16k mojibake URIs must not dominate)
+
+
+def load_biblio(splits):
+    """v11 (results/final_v11/PREREGISTRATION.md): Biblio-US17 DEV rows of the given splits (eval/v11_convert.py).
+    Attacks = LVL1, at most BIBLIO_FAMILY_CAP per family; normals = unique paths of the clean sample plus the rows
+    the signature tools flagged but the authors judged normal. No body in this dataset."""
+    from eval.v11_dev_eval import family
+    parts = []
+    for name, label in [("attack", 1), ("clean", 0), ("fp", 0)]:
+        path = V11_DIR / f"biblio_dev_{name}.csv"
+        if not path.exists():
+            print(f"{path} not found: run python eval/v11_convert.py")
+            continue
+        df = pd.read_csv(path, dtype=str, keep_default_na=False)
+        df = df[df["split"].isin(splits)].drop_duplicates(["method", "path"])
+        if label:
+            df = df.assign(fam=[family(m, p) for m, p in zip(df["method"], df["path"])])
+            df = df.groupby("fam", group_keys=False).head(BIBLIO_FAMILY_CAP)
+        print(f"adding Biblio-US17 {name}: {len(df)} rows ({', '.join(splits)})")
+        parts.append((to_frame(df["method"], df["path"], [""] * len(df)), pd.Series(label, index=range(len(df)))))
+    return (pd.concat([p[0] for p in parts], ignore_index=True), pd.concat([p[1] for p in parts], ignore_index=True))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--v9", action="store_true", help="also train on SR-BH and Glastopf DEV data")
     ap.add_argument("--srbh-days", default=",".join(SRBH_DEV_DAYS))
     ap.add_argument("--glastopf-until", default="2015-04-01")
     ap.add_argument("--v10", action="store_true", help="v9 data + ModSec-WP half 0 (results/final_v10/PREREGISTRATION.md)")
+    ap.add_argument("--v11", default="", help="v10 data + Biblio-US17 DEV splits, e.g. train or train,holdout")
     ap.add_argument("--out", default=str(MODEL_PATH))
     args = ap.parse_args(argv)
+    if args.v11:
+        args.v10 = True
     df = pd.read_csv(ROOT / "data" / "processed" / "csic_clean.csv", keep_default_na=False)
     X = to_frame(df["Method"], df["path"], df["body"])
     y = df["label"]
@@ -231,6 +264,9 @@ def main(argv=None):
         if args.v10:
             Xm, ym = load_modsecwp(0)
             X, y = pd.concat([X, Xm], ignore_index=True), pd.concat([y, ym], ignore_index=True)
+        if args.v11:
+            Xb, yb = load_biblio(args.v11.split(","))
+            X, y = pd.concat([X, Xb], ignore_index=True), pd.concat([y, yb], ignore_index=True)
         X = X.fillna(0)
     hand_cols = detector_columns(X)
 
