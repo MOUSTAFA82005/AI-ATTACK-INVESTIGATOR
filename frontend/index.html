@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#050813">
-<title>AI Attack Investigator</title>
-<meta name="description" content="Upload a web server access log. AI Attack Investigator finds the attacks, follows each attacker, and tells you what to block and how to fix it.">
+<title>TALON INVESTIGATOR · Find the attacks in your web logs</title>
+<meta name="description" content="Upload a web server access log. TALON INVESTIGATOR finds the attacks, follows each attacker, and tells you what to block and how to fix it.">
 <link rel="icon" href="/static/img/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/css/base.css">
 <link rel="stylesheet" href="/static/css/landing.css">
@@ -20,7 +20,7 @@
   <nav class="nav glass" id="nav" aria-label="Main">
     <a class="brand" href="/">
       <img class="mark" src="/static/img/mark.svg" width="38" height="38" alt="">
-      <span>AI Attack Investigator</span>
+      <span>TALON INVESTIGATOR</span>
     </a>
     <div class="nav-links">
       <a href="#how">How it works</a>
@@ -32,7 +32,7 @@
     </div>
     <div class="nav-actions">
       <a class="btn btn-small btn-ghost nav-login" href="/login">Log in</a>
-      <a class="btn btn-small btn-primary" href="/signup">Request access</a>
+      <a class="btn btn-small btn-primary" href="/signup">Create account</a>
     </div>
   </nav>
 </header>
@@ -46,13 +46,13 @@
       <p class="lede reveal" data-d=".16">Upload a web server log. The system scores every request, follows each visitor through the site,
         shows how far an attacker got, and tells you what to block and how to fix the hole.</p>
       <div class="hero-cta reveal" data-d=".24">
-        <a class="btn btn-primary btn-lg" href="/signup">Request access
+        <a class="btn btn-primary btn-lg" href="/signup">Create account
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
         <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
       </div>
       <ul class="hero-trust reveal" data-d=".32">
         <li>Runs on your own machine</li>
-        <li>Two-factor login</li>
+        <li>Two-step login by e-mail</li>
         <li>Works on sites it never saw</li>
       </ul>
     </div>
@@ -282,8 +282,8 @@
         </div>
       </div>
       <ul class="sec-list">
-        <li class="glass lit reveal"><b>Two-factor login</b><span>Password, then a 6-digit code from an authenticator app. Each code works once.</span></li>
-        <li class="glass lit reveal" data-d=".06"><b>Approved accounts only</b><span>New accounts wait until the project team approves them.</span></li>
+        <li class="glass lit reveal"><b>Two-step login</b><span>Password, then a 6-digit code sent to your e-mail. Each code works once and ends in 10 minutes.</span></li>
+        <li class="glass lit reveal" data-d=".06"><b>Confirmed e-mail</b><span>Pick a user name and add your e-mail; a code proves the address is yours before the account works.</span></li>
         <li class="glass lit reveal" data-d=".12"><b>Passwords never stored</b><span>Only a salted scrypt hash. Five wrong tries lock the address for a minute.</span></li>
         <li class="glass lit reveal" data-d=".18"><b>Private results</b><span>Every saved investigation belongs to one user. Nobody else can open it.</span></li>
         <li class="glass lit reveal" data-d=".24"><b>Attack payloads stay text</b><span>Log content is never run as code in the browser, and the page allows scripts from this server only.</span></li>
@@ -332,9 +332,9 @@
     <div class="cta-card glass lit reveal">
       <div class="cta-glow" aria-hidden="true"></div>
       <h2 id="cta-title">Bring a log.<br><span class="grad-text">Leave with a case file.</span></h2>
-      <p>Access needs two-factor login and approval by the team.</p>
+      <p>Create a free account and investigate your first log in minutes.</p>
       <div class="hero-cta">
-        <a class="btn btn-primary btn-lg" href="/signup">Request access</a>
+        <a class="btn btn-primary btn-lg" href="/signup">Create account</a>
         <a class="btn btn-ghost btn-lg" href="/login">Log in</a>
       </div>
     </div>
@@ -348,7 +348,7 @@
       <div class="foot-brand">
         <a class="brand" href="/">
           <img class="mark" src="/static/img/mark.svg" width="38" height="38" alt="">
-          <span>AI Attack Investigator</span>
+          <span>TALON INVESTIGATOR</span>
         </a>
         <p>Attack detection and response for web server logs. Find the attacker, see how far they got, and close the hole.</p>
         <a class="status glass" id="status" href="/health"><span class="status-dot"></span><span id="status-text">Checking status…</span></a>
@@ -371,7 +371,7 @@
           <h4>Security</h4>
           <a href="#security">How we protect data</a>
           <a href="/login">Log in</a>
-          <a href="/signup">Request access</a>
+          <a href="/signup">Create account</a>
         </div>
         <div>
           <h4>Open source</h4>
@@ -383,7 +383,7 @@
     </div>
     <div class="foot-word" aria-hidden="true">INVESTIGATOR</div>
     <div class="foot-bottom">
-      <span>© 2026 AI Attack Investigator. Built at Mansoura University.</span>
+      <span>© 2026 TALON INVESTIGATOR. Built at Mansoura University.</span>
       <span class="foot-meta"><span>Models v10.0</span><span>Made in Egypt</span></span>
     </div>
   </div>

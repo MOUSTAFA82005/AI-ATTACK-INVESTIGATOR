@@ -41,6 +41,9 @@ def summarize(result, seconds=None):
         "types": dict(types.most_common()),
         "top_sessions": [{"ip": s.get("ip"), "risk_score": s.get("risk_score"), "risk_level": s.get("risk_level"),
                           "action": s.get("action"), "attack_types": (s.get("attack_types") or [])[:3]} for s in top],
+        "flagged_visitors": [{"ip": s.get("ip"), "risk_score": s.get("risk_score"), "risk_level": s.get("risk_level"),
+                              "action": s.get("action"), "attack_types": (s.get("attack_types") or [])[:3]}
+                             for s in sorted(flagged, key=lambda s: -s.get("risk_score", 0))[:500]],
         "log_start": times[0] if times else None,
         "log_end": times[-1] if times else None,
         "seconds": round(seconds, 1) if seconds is not None else None,

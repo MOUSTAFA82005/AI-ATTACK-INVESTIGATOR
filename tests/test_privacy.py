@@ -65,6 +65,15 @@ def test_short_names_stay_exact():
         assert mask_secrets(f"{name}=x") == f"{name}=x"
         assert json.loads(mask_secrets(json.dumps({name: "x"})))[name] == "x"
 
+
+def test_more_secret_names_are_hidden():
+    body = '{"PHPSESSID":"abc","jwt":"x.y.z","pin":"1234","otp":"999999","passport":"keep","auth":"Bearer q"}'
+    out = json.loads(mask_secrets(body))
+    assert out["PHPSESSID"] == out["jwt"] == out["pin"] == out["otp"] == out["auth"] == "***"
+    assert out["passport"] == "keep"
+    assert mask_path("/x?session_id=1&q=union") == "/x?session_id=***&q=union"
+
+
 if __name__ == "__main__":
     tests = [f for n, f in sorted(globals().items()) if n.startswith("test_")]
     for t in tests:

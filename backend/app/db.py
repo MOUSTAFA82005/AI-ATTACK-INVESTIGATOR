@@ -21,12 +21,13 @@ DB_PATH = Path(os.environ.get("AAI_DB", ROOT / "var" / "app.db"))
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    username   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    username   TEXT NOT NULL UNIQUE COLLATE NOCASE,   -- the name shown in the dashboard; can log in with it
+    email      TEXT,                       -- where codes are sent; can log in with it (unique, see below)
     password   TEXT NOT NULL,              -- JSON: salt, scrypt parameters, hash (never the password)
     status     TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
-    totp_secret     TEXT NOT NULL,         -- base32 key of the authenticator app (2FA)
-    totp_confirmed  INTEGER NOT NULL DEFAULT 0,   -- 1 once the user typed a right code at setup
-    totp_last_step  INTEGER NOT NULL DEFAULT 0,   -- last 30-second step used: a code works only once
+    totp_secret     TEXT NOT NULL,         -- unused since codes come by e-mail (kept so older databases open)
+    totp_confirmed  INTEGER NOT NULL DEFAULT 0,   -- 1 once the e-mail address is confirmed with a code
+    totp_last_step  INTEGER NOT NULL DEFAULT 0,   -- unused (kept so older databases open)
     created_at REAL NOT NULL,
     last_login REAL
 );
@@ -40,6 +41,8 @@ CREATE TABLE IF NOT EXISTS investigations (
 );
 CREATE INDEX IF NOT EXISTS inv_user ON investigations(user_id, created_at);
 """
+# Older databases had no email column (the user name held the address); add it on open.
+EMAIL_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE)"
 
 
 class Store:
@@ -52,6 +55,11 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(SCHEMA)
+        if "email" not in [r[1] for r in self._db.execute("PRAGMA table_info(users)")]:
+            with self._db:
+                self._db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+                self._db.execute("UPDATE users SET email = lower(username) WHERE username LIKE '%_@_%'")
+        self._db.execute(EMAIL_INDEX)
         self._lock = threading.Lock()
 
     def _q(self, sql, args=(), one=False):
@@ -73,28 +81,41 @@ class Store:
         u["password"] = json.loads(u["password"])
         return u
 
-    def add_user(self, username, password_record, totp_secret, status="pending"):
-        """Returns the new id, or None when the name is taken (names ignore upper/lower case)."""
+    def add_user(self, username, password_record, email=None, status="pending"):
+        """Returns the new id, or None when the user name or e-mail is taken (both ignore upper/lower case)."""
         try:
-            return self._exec("INSERT INTO users (username, password, totp_secret, status, created_at) VALUES (?, ?, ?, ?, ?)",
-                              (username, json.dumps(password_record), totp_secret, status, time.time()))
+            return self._exec("INSERT INTO users (username, email, password, totp_secret, status, created_at) "
+                              "VALUES (?, ?, ?, '', ?, ?)",
+                              (username, email, json.dumps(password_record), status, time.time()))
         except sqlite3.IntegrityError:
             return None
 
     def user_by_name(self, username):
         return self._user(self._q("SELECT * FROM users WHERE username = ?", (username,), one=True))
 
+    def user_by_email(self, email):
+        return self._user(self._q("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,), one=True))
+
+    def user_by_login(self, login):
+        """The account for what was typed in the login box: an e-mail address (has '@') or a user name."""
+        return self.user_by_email(login) if "@" in login else self.user_by_name(login)
+
+    def delete_unconfirmed(self, older_than):
+        """Drop sign-ups that never confirmed their e-mail, so they do not hold a name or address forever."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM users WHERE totp_confirmed = 0 AND created_at < ?", (older_than,)).rowcount
+
     def user_by_id(self, user_id):
         return self._user(self._q("SELECT * FROM users WHERE id = ?", (user_id,), one=True))
 
     def users(self):
-        rows = self._q("SELECT u.id, u.username, u.status, u.totp_confirmed, u.created_at, u.last_login, "
+        rows = self._q("SELECT u.id, u.username, u.email, u.status, u.totp_confirmed, u.created_at, u.last_login, "
                        "(SELECT COUNT(*) FROM investigations i WHERE i.user_id = u.id) AS investigations "
                        "FROM users u ORDER BY u.status = 'pending' DESC, u.created_at")
         return [dict(r) for r in rows]
 
     def update_user(self, user_id, **fields):
-        allowed = {"status", "last_login", "totp_secret", "totp_confirmed", "totp_last_step"}
+        allowed = {"username", "email", "status", "last_login", "totp_secret", "totp_confirmed", "totp_last_step"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if "password" in fields:
             sets["password"] = json.dumps(fields["password"])
@@ -109,18 +130,14 @@ class Store:
     def active_users(self):
         return self._q("SELECT COUNT(*) AS n FROM users WHERE status = 'active'", one=True)["n"]
 
-    def use_totp_step(self, user_id, step):
-        """Record that the code of `step` was used. False when that step (or a later one) was
-        already used, so a code seen over someone's shoulder cannot be replayed."""
-        with self._lock, self._db:
-            return self._db.execute("UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?",
-                                    (step, user_id, step)).rowcount == 1
-
     # ------------------------------------------------------------------ investigations
     def save_investigation(self, user_id, filename, summary, result):
         blob = zlib.compress(json.dumps(result, separators=(",", ":")).encode("utf-8"), 6)
         return self._exec("INSERT INTO investigations (user_id, created_at, filename, summary, result) VALUES (?, ?, ?, ?, ?)",
                           (user_id, time.time(), filename, json.dumps(summary), blob))
+
+    def count_investigations(self, user_id):
+        return self._q("SELECT COUNT(*) AS n FROM investigations WHERE user_id = ?", (user_id,), one=True)["n"]
 
     def investigations(self, user_id, limit=None):
         sql = "SELECT id, created_at, filename, summary FROM investigations WHERE user_id = ? ORDER BY created_at DESC, id DESC"

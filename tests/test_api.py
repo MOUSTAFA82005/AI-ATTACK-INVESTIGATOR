@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backend.app import main  # noqa: E402
 from ml.next_step import NextStepModel  # noqa: E402
 from backend.app import auth as auth_module  # noqa: E402
-from backend.app.auth import Auth, make_record, new_totp_secret  # noqa: E402
+from backend.app.auth import Auth, make_record  # noqa: E402
 from backend.app.db import Store  # noqa: E402
 
 
@@ -77,7 +77,7 @@ def client(monkeypatch):
     # Login is tested in tests/test_auth.py; here every request counts as logged in, and
     # saved investigations go to an in-memory database.
     store = Store(":memory:")
-    uid = store.add_user("tester", make_record("tester-password"), new_totp_secret(), status="active")
+    uid = store.add_user("tester", make_record("tester-password"), email="tester@example.com", status="active")
     monkeypatch.setattr(auth_module, "auth", Auth(store))
     monkeypatch.setitem(main.app.dependency_overrides, main.require_user, lambda: {"id": uid, "username": "tester"})
     c = TestClient(main.app)

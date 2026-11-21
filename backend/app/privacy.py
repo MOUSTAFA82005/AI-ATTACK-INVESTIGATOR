@@ -7,10 +7,11 @@ MASK = "***"
 # A field is secret when its lowercase name CONTAINS one of these.
 SECRET_CONTAINS = (
     "password", "passwd", "pwd", "secret", "token",
-    "apikey", "api_key", "cardnumber", "cvv", "cvc",
+    "apikey", "api_key", "api-key", "cardnumber", "card_number", "cvv", "cvc",
+    "sessid", "sessionid", "session_id", "jwt", "credential", "private_key", "authorization",
 )
 # Short names that must match EXACTLY, so "passport", "compass", "cardigan" stay visible.
-SECRET_EXACT = {"pass", "card"}
+SECRET_EXACT = {"pass", "card", "pin", "otp", "ssn", "sid", "auth"}
 
 
 def _is_secret(name):
@@ -20,7 +21,9 @@ def _is_secret(name):
 def _mask_json(value):
     """Walk a parsed JSON value at any depth and mask secret fields."""
     if isinstance(value, dict):
-        return {k: MASK if _is_secret(k) else _mask_json(v) for k, v in value.items()}
+        # A secret name hides its value; a nested object under it is still walked.
+        return {k: MASK if _is_secret(k) and not isinstance(v, (dict, list)) else _mask_json(v)
+                for k, v in value.items()}
     if isinstance(value, list):
         return [_mask_json(v) for v in value]
     return value

@@ -13,6 +13,13 @@
   let me = null;
   const put = (...nodes) => view.replaceChildren(...nodes.filter(Boolean));
   let mode = "sensitive";
+  try { if (localStorage.getItem("aai-mode") === "quiet") mode = "quiet"; } catch { /* private mode */ }
+  /** The detection mode, remembered in this browser for the New investigation page. */
+  function setMode(k) {
+    mode = k;
+    try { localStorage.setItem("aai-mode", k); } catch { /* private mode */ }
+    for (const r of document.querySelectorAll('input[name="mode"]')) r.checked = r.value === k;
+  }
 
   async function call(path, opts) {
     try { return await api(path, opts); }
@@ -26,7 +33,7 @@
   function setPage(title, actions = []) {
     $("#page-title").textContent = title;
     $("#page-actions").replaceChildren(...actions);
-    document.title = `${title} · AI Attack Investigator`;
+    document.title = `${title} · TALON INVESTIGATOR`;
   }
   function setNav(route) {
     for (const a of document.querySelectorAll(".side-nav a")) {
@@ -49,11 +56,17 @@
   async function route() {
     closeMenu();
     Falcon.favicon("watch");
-    const [, name, arg] = (location.hash || "#/home").split("/");
+    const [, name, arg, section] = (location.hash || "#/home").split("/");
+    refreshSide();
+    if (name !== "search" && document.activeElement !== $("#side-q")) $("#side-q").value = "";
     try {
       if (name === "new") { setNav("new"); return renderNew(); }
       if (name === "history") { setNav("history"); return await renderHistory(); }
-      if (name === "inv" && arg) { setNav("history"); return await renderInvestigation(Number(arg)); }
+      if (name === "attackers") { setNav("attackers"); return await renderAttackers(); }
+      if (name === "recent") { setNav("recent"); return await renderRecent(); }
+      if (name === "notifications") { setNav("notifications"); return await renderNotifications(arg || "all"); }
+      if (name === "search") { setNav("search"); return await renderSearch(); }
+      if (name === "inv" && arg) { setNav("history"); return await renderInvestigation(arg, section || "summary"); }
       if (name === "account") { setNav("account"); return await renderAccount(); }
       setNav("home");
       return await renderHome();
@@ -95,10 +108,10 @@
       el("div", { class: "grid grid-2" },
         panel("Attack requests per log", `last ${s.trend.length} investigations`, trendChart(s.trend)),
         panel("Attack types", "requests, all logs", typeBars(s.types))),
-      el("div", { class: "grid grid-2e", style: "margin-top:20px" },
+      el("div", { class: "grid grid-2e" },
         panel("Visitors by risk", "all visitors, all logs", levelStack(s.levels)),
         panel("How far attackers got", "visitors that reached each stage", stageBars(s.stages))),
-      el("div", { class: "grid grid-2", style: "margin-top:20px" },
+      el("div", { class: "grid grid-2" },
         panel("Most dangerous visitors", "highest risk seen", attackersTable(s.top_attackers)),
         panel("Recent investigations", null, recentList(s.recent))),
     );
@@ -232,7 +245,7 @@
       Object.entries(MODES).map(([k, [name, text]]) => {
         const r = el("input", { type: "radio", name: "mode", value: k });
         r.checked = k === mode;
-        r.addEventListener("change", () => { mode = k; });
+        r.addEventListener("change", () => setMode(k));
         return el("label", {}, r, el("strong", {}, name), el("span", {}, text));
       }));
 
@@ -257,9 +270,12 @@
         try {
           const data = JSON.parse(await file.text());
           if (!data || !Array.isArray(data.sessions)) throw new Error("This file is not a saved investigation.");
-          return showInvestigation(data, { saved: false });
+          current = { key: "file", data, saved: false };
+          location.hash = "#/inv/file/summary";
+          return;
         } catch (e) { msg.className = "notice error"; msg.textContent = `Could not open the file: ${e.message}`; msg.hidden = false; return; }
       }
+      try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); } catch { /* not supported */ }
       go.disabled = true;
       go.replaceChildren(el("span", { class: "spinner" }), "Investigating…");
       steps.hidden = false;
@@ -276,6 +292,7 @@
         const r = await call(`/investigate?mode=${encodeURIComponent(mode)}`, { method: "POST", body: fd });
         const bad = (r.sessions_flagged || 0) > 0 || (r.sessions || []).some((x) => (x.timeline || []).some((t) => t.is_attack));
         Falcon.setState(hawk, bad ? "threat" : "safe");
+        desktopAlert(bad ? "Attacks found" : "Log looks clean", `${file.name}: ${num(r.sessions_flagged || 0)} suspicious visitors.`);
         scanBox.lastChild.textContent = bad ? "Attacks found. Opening the case file…" : "Nothing found. Opening the result…";
         items.forEach((li) => { li.className = "done"; });
         await new Promise((ok) => setTimeout(ok, 1100));
@@ -335,24 +352,91 @@
   }
 
   // ---------------------------------------------------------------- one investigation
-  async function renderInvestigation(id) {
-    setPage("Investigation");
-    loading();
-    showInvestigation(await call(`/api/investigations/${id}`), { saved: true });
+  // One investigation is split into sections, picked from the sidebar: Summary, Visitors,
+  // Attack requests, Fixes and rules. The result is fetched once and kept while you switch.
+  let current = null;            // { key, data, saved }
+  const SECTIONS = [["summary", "Summary"], ["visitors", "Visitors"], ["requests", "Attack requests"], ["fixes", "Fixes and rules"]];
+  /** Tabs at the top of one investigation, with counts. */
+  function caseTabs(key, section, counts) {
+    return el("nav", { class: "case-tabs", "aria-label": "This investigation" }, SECTIONS.map(([id, label]) => {
+      const a = el("a", { href: `#/inv/${key}/${id}` }, label, counts[id] != null ? el("span", { class: "count" }, num(counts[id])) : null);
+      if (id === section) a.setAttribute("aria-current", "page");
+      return a;
+    }));
   }
 
-  function showInvestigation(data, { saved }) {
+  async function renderInvestigation(key, section) {
+    if (!current || current.key !== String(key)) {
+      if (key === "file") { location.hash = "#/new"; return; }
+      setPage("Investigation");
+      loading();
+      current = { key: String(key), data: await call(`/api/investigations/${Number(key)}`), saved: true };
+    }
+    showInvestigation(current, section);
+  }
+
+  function showInvestigation({ key, data, saved }, section) {
     const exportBtn = el("button", { class: "btn btn-ghost btn-small", type: "button" }, "Save as JSON");
     exportBtn.addEventListener("click", () => download(data));
-    setPage(data.filename || "Investigation", [exportBtn, saved ? deleteButton(data.id, () => { location.hash = "#/history"; }) : null].filter(Boolean));
+    setPage(data.filename || "Investigation", [exportBtn, saved ? deleteButton(data.id, () => { current = null; location.hash = "#/history"; }) : null].filter(Boolean));
 
     const sessions = data.sessions || [];
-    const timeline = sessions.flatMap((s) => s.timeline || []);
+    const timeline = sessions.flatMap((s) => (s.timeline || []).map((t) => ({ ...t, ip: s.ip })));
     const attacks = timeline.filter((t) => t.is_attack).length;
     const payload = timeline.filter((t) => t.label === "attack").length;
     const blocked = sessions.filter((s) => s.action === "block" && s.risk_score > 0).length;
+    const flaggedCount = data.sessions_flagged ?? sessions.filter((x) => x.risk_score > 0).length;
+    const fixList = mergedFixes(sessions), ruleLines = mergedRules(sessions);
 
     Falcon.favicon(attacks > 0 ? "threat" : "safe");
+    const banners = [
+      caseTabs(key, section, { visitors: flaggedCount, requests: attacks, fixes: fixList.length }),
+      !saved ? el("div", { class: "notice warn banner" }, "Opened from a file. This result is not saved to your account.") : null,
+      data.sample ? el("div", { class: "notice warn banner" }, "Sample data for the interface only. Do not quote these numbers.") : null,
+    ];
+    const sectionHead = (title, sub) => el("div", { class: "section-head" }, el("h2", {}, title), sub ? el("p", { class: "muted" }, sub) : null);
+
+    if (section === "visitors") return put(...banners, visitorsPanel(sessions));
+    if (section === "requests") {
+      return put(...banners, sectionHead("Attack requests", "Every request in the log, with the visitor it came from. Untick the box to see normal requests too."),
+        el("section", { class: "panel" }, timelineTable({ timeline: [...timeline].sort((x, y) => String(x.timestamp).localeCompare(String(y.timestamp))) }, { showIp: true })));
+    }
+    if (section === "fixes") {
+      return put(...banners, sectionHead("Fixes and rules", "What to change in the site, and WAF rules for every flagged visitor in this log."),
+        el("div", { class: "grid grid-2" },
+          el("section", { class: "panel" }, fixList.length ? fixes({ fixes: fixList }) : el("p", { class: "muted" }, "No fixes needed: no attack found.")),
+          el("section", { class: "panel" }, ruleLines.length ? rules({ waf_rules: ruleLines }) : el("p", { class: "muted" }, "No WAF rules: no visitor to block."))));
+    }
+
+    // Summary
+    const types = {};
+    for (const t of timeline) if (t.is_attack && t.attack_type) types[t.attack_type] = (types[t.attack_type] || 0) + 1;
+    const levels = Object.fromEntries(LEVELS.map((l) => [l, sessions.filter((s) => s.risk_level === l).length]));
+    const stages = Object.fromEntries(STAGES.map((st) => [st, sessions.filter((s) => (s.stage_path || []).includes(st)).length]));
+    const top = sessions.filter((s) => s.risk_score > 0).sort((a, b) => b.risk_score - a.risk_score).slice(0, 5);
+    put(...banners,
+      verdict(attacks, flaggedCount, null),
+      el("section", { class: "kpis summary", "aria-label": "Summary" },
+        kpi("Requests read", num(data.parsed ?? timeline.length), `${num(data.skipped || 0)} lines skipped, ${data.format || "unknown format"}`),
+        kpi("Visitors flagged", `${num(flaggedCount)} / ${num(data.sessions_total ?? sessions.length)}`, levelText(sessions)),
+        kpi("Attack requests", num(attacks), `${num(payload)} by payload, ${num(attacks - payload)} by behaviour`, "threat"),
+        kpi("Suggested blocks", num(blocked), `${num(sessions.filter((s) => s.action === "rate_limit").length)} rate limits`),
+        kpi("Mode", nice(data.mode || "sensitive"), `threshold ${data.threshold ?? "–"}${data.seconds ? `, ${data.seconds} s` : ""}`)),
+      el("div", { class: "grid grid-2e" },
+        panel("Attack types", "attack requests in this log", typeBars(Object.fromEntries(Object.entries(types).sort((a, b) => b[1] - a[1])))),
+        panel("How far attackers got", "visitors that reached each stage", stageBars(stages))),
+      el("div", { class: "grid grid-2" },
+        panel("Visitors by risk", "all visitors in this log", levelStack(levels)),
+        panel("Most dangerous visitors", el("a", { href: `#/inv/${key}/visitors` }, "See all visitors"),
+          top.length ? el("div", { class: "table-wrap" }, el("table", { class: "t" },
+            el("thead", {}, el("tr", {}, el("th", {}, "Visitor"), el("th", {}, "Risk"), el("th", {}, "Action"))),
+            el("tbody", {}, top.map((v) => el("tr", {},
+              el("td", { class: "ipcell" }, v.ip),
+              el("td", {}, el("span", { class: `badge lv-${v.risk_level}` }, `${nice(v.risk_level)} ${v.risk_score}`)),
+              el("td", {}, el("span", { class: `badge act-${v.action || "allow"}` }, nice(v.action || "allow")))))))) : el("p", { class: "muted" }, "No flagged visitors."))));
+  }
+
+  function visitorsPanel(sessions) {
     let openId = null;
     const search = el("input", { class: "search", type: "search", placeholder: "Filter by address, type or stage", "aria-label": "Filter visitors" });
     const flagged = el("input", { type: "checkbox" });
@@ -388,24 +472,24 @@
     search.addEventListener("input", draw);
     flagged.addEventListener("change", draw);
     draw();
-
-    put(
-      !saved ? el("div", { class: "notice warn banner" }, "Opened from a file. This result is not saved to your account.") : null,
-      data.sample ? el("div", { class: "notice warn banner" }, "Sample data for the interface only. Do not quote these numbers.") : null,
-      verdict(attacks, data.sessions_flagged ?? sessions.filter((x) => x.risk_score > 0).length, null),
-      el("section", { class: "kpis summary", "aria-label": "Summary" },
-        kpi("Requests read", num(data.parsed ?? timeline.length), `${num(data.skipped || 0)} lines skipped, ${data.format || "unknown format"}`),
-        kpi("Visitors flagged", `${num(data.sessions_flagged ?? 0)} / ${num(data.sessions_total ?? sessions.length)}`, levelText(sessions)),
-        kpi("Attack requests", num(attacks), `${num(payload)} by payload, ${num(attacks - payload)} by behaviour`, "threat"),
-        kpi("Suggested blocks", num(blocked), `${num(sessions.filter((s) => s.action === "rate_limit").length)} rate limits`),
-        kpi("Mode", nice(data.mode || "sensitive"), `threshold ${data.threshold ?? "–"}${data.seconds ? `, ${data.seconds} s` : ""}`)),
-      el("section", { class: "panel" },
-        el("div", { class: "toolbar" }, el("h2", {}, "Visitors"), el("span", { class: "grow" }), search, el("label", { class: "check" }, flagged, "Flagged only")),
-        el("div", { class: "table-wrap" }, el("table", { class: "t sessions" },
-          el("colgroup", {}, el("col", { class: "c-risk" }), el("col", { class: "c-ip" }), el("col"), el("col", { class: "c-req" }), el("col", { class: "c-stage" }), el("col", { class: "c-act" })),
-          el("thead", {}, el("tr", {}, ["Risk", "Visitor", "What happened", "Requests", "Stage", "Action"].map((h, i) => el("th", { class: i === 3 ? "num" : null }, h)))),
-          tbody)),
-        el("p", { class: "note" }, "A visitor is one address and browser, with gaps under 30 minutes. Select a row for the reasons, the timeline and the fixes.")));
+    return el("section", { class: "panel" },
+      el("div", { class: "toolbar" }, el("h2", {}, "Visitors"), el("span", { class: "grow" }), search, el("label", { class: "check" }, flagged, "Flagged only")),
+      el("div", { class: "table-wrap" }, el("table", { class: "t sessions" },
+        el("colgroup", {}, el("col", { class: "c-risk" }), el("col", { class: "c-ip" }), el("col"), el("col", { class: "c-req" }), el("col", { class: "c-stage" }), el("col", { class: "c-act" })),
+        el("thead", {}, el("tr", {}, ["Risk", "Visitor", "What happened", "Requests", "Stage", "Action"].map((h, i) => el("th", { class: i === 3 ? "num" : null }, h)))),
+        tbody)),
+      el("p", { class: "note" }, "A visitor is one address and browser, with gaps under 30 minutes. Select a row for the reasons, the stage and that visitor's requests."));
+  }
+  function mergedFixes(sessions) {
+    const seen = new Map();
+    for (const s of sessions) for (const f of s.fixes || []) {
+      const m = f.matches?.[0];
+      if (m && !seen.has(m.title)) seen.set(m.title, f);
+    }
+    return [...seen.values()];
+  }
+  function mergedRules(sessions) {
+    return [...new Set(sessions.flatMap((s) => s.waf_rules || []))];
   }
   function haystack(s) {
     return [s.ip, s.risk_level, s.stage, s.action, ...(s.behaviours || []), ...(s.attack_types || [])]
@@ -426,9 +510,9 @@
     const right = el("div", {},
       el("h3", {}, "Suggested action"),
       el("p", {}, el("span", { class: `badge act-${s.action || "allow"}` }, nice(s.action || "allow")), " ", el("span", { class: "muted small" }, s.action_reason || "")),
-      fixes(s), rules(s));
+      fixes(s));
     return el("div", { class: "detail" }, el("div", { class: "detail-grid" }, left, right),
-      el("h3", {}, `Timeline, ${num((s.timeline || []).length)} requests`), timelineTable(s));
+      el("h3", {}, `Requests, ${num((s.timeline || []).length)}`), timelineTable(s));
   }
   function stageBar(s) {
     const seen = new Set(s.stage_path || []);
@@ -469,13 +553,15 @@
     return el("div", {}, el("div", { class: "rules-head" }, el("h3", {}, "WAF rules"), copy), el("pre", { class: "rules" }, text),
       el("p", { class: "note" }, "Review before use. Lines starting with # are Nginx settings or advice."));
   }
-  function timelineTable(s) {
+  function timelineTable(s, { showIp = false } = {}) {
     const t = s.timeline || [];
     const only = el("input", { type: "checkbox" });
+    only.checked = showIp;
     const tbody = el("tbody");
     const fill = () => tbody.replaceChildren(...t.filter((r) => !only.checked || r.is_attack).slice(0, 500).map((r) =>
       el("tr", { class: r.is_attack ? "attack" : "" },
         el("td", { class: "nowrap" }, fmtTime(r.timestamp).slice(11) || "–"),
+        showIp ? el("td", { class: "ipcell" }, r.ip || "–") : null,
         el("td", { class: "req" }, `${r.method} ${r.path}`, r.body ? el("div", { class: "muted" }, `body: ${r.body}`) : null),
         el("td", {}, r.status ?? "–"),
         el("td", { class: "num" }, r.attack_prob == null ? "–" : Number(r.attack_prob).toFixed(2)),
@@ -488,7 +574,8 @@
     return el("div", {},
       el("label", { class: "check", style: "margin-bottom:8px" }, only, "Attack requests only"),
       el("div", { class: "table-wrap" }, el("table", { class: "t timeline" },
-        el("thead", {}, el("tr", {}, ["Time", "Request", "Status", "Score", "Type and why", "Review"].map((h, i) => el("th", { class: i === 3 ? "num" : i === 5 ? "hide-sm" : null }, h)))),
+        el("thead", {}, el("tr", {}, ["Time", showIp ? "Visitor" : null, "Request", "Status", "Score", "Type and why", "Review"].filter(Boolean)
+          .map((h) => el("th", { class: h === "Score" ? "num" : h === "Review" ? "hide-sm" : null }, h)))),
         tbody)),
       t.length > 500 ? el("p", { class: "note" }, `Showing the first 500 of ${num(t.length)} requests. The saved JSON has all of them.`) : null,
       el("p", { class: "note" }, "Score is the detector's attack probability. A request is an attack by payload when the score reaches the mode's threshold, or by behaviour from the whole visit."));
@@ -501,6 +588,235 @@
   }
 
   // ---------------------------------------------------------------- account
+  // ---------------------------------------------------------------- sidebar data (counts, recent logs)
+  let sideList = null;           // the latest /api/investigations answer
+  async function refreshSide() {
+    try { sideList = (await call("/api/investigations")).investigations; } catch { return; }
+    const visitors = attackerList(sideList);
+    const ci = $("#cnt-inv"), ca = $("#cnt-att");
+    ci.hidden = !sideList.length; ci.textContent = num(sideList.length);
+    ca.hidden = !visitors.length; ca.textContent = num(visitors.length);
+    drawNotifications();
+    const box = $("#side-recent");
+    box.hidden = !sideList.length;
+    const here = (location.hash.split("/")[2] || "");
+    box.replaceChildren(el("div", { class: "side-label side-label-link" }, el("span", { class: "lbl" }, "Recent"),
+        el("a", { class: "lbl", href: "#/recent" }, "See all")),
+      ...sideList.slice(0, 4).map((it) => {
+        const bad = (it.attack_requests || it.sessions_flagged) > 0;
+        const a = el("a", { href: `#/inv/${it.id}`, title: it.filename || "log" },
+          el("span", { class: `rdot ${bad ? "bad" : "ok"}`, "aria-hidden": "true" }),
+          el("span", { class: "rname" }, it.filename || "log"),
+          el("span", { class: `rnum ${bad ? "bad" : ""}` }, bad ? num(it.attack_requests) : "clean"));
+        if (String(it.id) === here) a.setAttribute("aria-current", "page");
+        return a;
+      }));
+  }
+
+  /** Every flagged visitor over all saved logs: highest risk seen, how many logs, latest log. */
+  function attackerList(items) {
+    const map = new Map();
+    for (const it of items) {
+      for (const v of it.flagged_visitors || it.top_sessions || []) {
+        if (!v.ip) continue;
+        const a = map.get(v.ip) || { ip: v.ip, risk_score: -1, risk_level: "none", action: "allow", logs: 0, last: it, types: new Set() };
+        a.logs += 1;
+        (v.attack_types || []).forEach((t) => a.types.add(t));
+        if ((v.risk_score || 0) > a.risk_score) Object.assign(a, { risk_score: v.risk_score || 0, risk_level: v.risk_level, action: v.action || "allow" });
+        map.set(v.ip, a);
+      }
+    }
+    return [...map.values()].sort((x, y) => y.risk_score - x.risk_score || y.logs - x.logs);
+  }
+
+  // ---------------------------------------------------------------- recent: one card per log, by day
+  async function renderRecent() {
+    setPage("Recent", [el("a", { class: "btn btn-primary btn-small", href: "#/new" }, "New investigation")]);
+    loading();
+    const items = (await call("/api/investigations")).investigations;
+    if (!items.length) { put(emptyState("Nothing here yet", "Every log you investigate shows up here, newest first.")); return; }
+    const day = (sec) => { const d = new Date(sec * 1000); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const today = day(Date.now() / 1000), dayMs = 86400000;
+    const label = (t) => t === today ? "Today" : t === today - dayMs ? "Yesterday"
+      : new Date(t).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    const groups = new Map();
+    for (const it of items) { const k = day(it.created_at); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
+    put(...[...groups].map(([k, list]) => el("section", { class: "day" },
+      el("h2", { class: "day-title" }, label(k), el("span", { class: "muted" }, `${list.length} log${list.length > 1 ? "s" : ""}`)),
+      el("div", { class: "log-cards" }, list.map(logCard)))));
+  }
+  function logCard(it) {
+    const bad = (it.attack_requests || it.sessions_flagged) > 0;
+    const lv = it.levels || {};
+    const total = LEVELS.reduce((n, l) => n + (lv[l] || 0), 0) || 1;
+    const types = Object.keys(it.types || {}).slice(0, 3);
+    const a = el("a", { class: `log-card ${bad ? "bad" : "good"}`, href: `#/inv/${it.id}` },
+      el("div", { class: "lc-top" },
+        Falcon.make({ size: 40, state: bad ? "threat" : "safe", label: bad ? "Attacks found" : "Clean" }),
+        el("div", { class: "lc-name" }, el("strong", {}, it.filename || "log"),
+          el("span", { class: "small muted" }, `${new Date(it.created_at * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${it.format || "log"} · ${nice(it.mode || "sensitive")}`))),
+      el("div", { class: "lc-stats" },
+        el("div", {}, el("b", { class: bad ? "threat" : "" }, num(it.attack_requests || 0)), el("span", {}, "attack requests")),
+        el("div", {}, el("b", {}, `${num(it.sessions_flagged || 0)}/${num(it.sessions_total || 0)}`), el("span", {}, "visitors flagged")),
+        el("div", {}, el("b", {}, num(it.parsed || 0)), el("span", {}, "requests"))),
+      el("div", { class: "lc-risk", "aria-label": "Visitors by risk" }, LEVELS.filter((l) => lv[l]).map((l) =>
+        el("i", { class: `lv-bg-${l}`, style: `flex:${lv[l] / total}`, title: `${nice(l)} ${lv[l]}` }))),
+      el("div", { class: "lc-tags" }, types.length ? types.map((t) => el("span", { class: "chip" }, nice(t))) : el("span", { class: "chip ok" }, "No attacks")));
+    return a;
+  }
+
+  // ---------------------------------------------------------------- notifications (bell in the top bar)
+  // Built from your saved investigations: finished logs, critical visitors and visitors that came back.
+  // Which ones you have read is remembered in this browser only.
+  let readUntil = 0;
+  try { readUntil = Number(localStorage.getItem("aai-notif-read") || 0); } catch { /* private mode */ }
+  function notifications(limit = 30) {
+    const out = [];
+    for (const it of sideList || []) {
+      const bad = (it.attack_requests || it.sessions_flagged) > 0;
+      out.push({ time: it.created_at, tone: bad ? "bad" : "good", href: `#/inv/${it.id}`,
+        title: bad ? `${num(it.attack_requests)} attack requests in ${it.filename || "a log"}` : `${it.filename || "A log"} looks clean`,
+        text: bad ? `${num(it.sessions_flagged)} suspicious visitors. Open the case.` : "No attack found." });
+      for (const v of (it.flagged_visitors || it.top_sessions || []).filter((x) => x.risk_level === "critical").slice(0, 3)) {
+        out.push({ time: it.created_at + 0.001, tone: "bad", href: `#/inv/${it.id}/visitors`,
+          title: `Critical visitor ${v.ip}`, text: `In ${it.filename || "a log"}. Suggested action: ${nice(v.action || "block")}.` });
+      }
+    }
+    for (const a of attackerList(sideList || []).filter((x) => x.logs > 1).slice(0, 5)) {
+      out.push({ time: a.last.created_at + 0.002, tone: "warn", href: "#/attackers",
+        title: `${a.ip} came back`, text: `Seen in ${a.logs} of your logs. Consider blocking it.` });
+    }
+    return out.sort((x, y) => y.time - x.time).slice(0, limit);
+  }
+  function notifItem(n, { onClick } = {}) {
+    const a = el("a", { class: `notif-item ${n.tone}${n.time > readUntil ? " unread" : ""}`, href: n.href },
+      el("span", { class: "nd", "aria-hidden": "true" }),
+      el("span", { class: "nt" }, el("strong", {}, n.title), el("span", {}, n.text), el("small", {}, fmtDate(n.time))));
+    if (onClick) a.addEventListener("click", onClick);
+    return a;
+  }
+  const NOTIF_FILTERS = { all: ["All", () => true], unread: ["Unread", (n) => n.time > readUntil],
+    threats: ["Threats", (n) => n.tone !== "good"], clean: ["Clean logs", (n) => n.tone === "good"] };
+  async function renderNotifications(filter) {
+    if (!NOTIF_FILTERS[filter]) filter = "all";
+    const read = el("button", { class: "btn btn-ghost btn-small", type: "button" }, "Mark all as read");
+    read.addEventListener("click", () => { markAllRead(); renderNotifications(filter); });
+    setPage("Notifications", [read]);
+    loading();
+    sideList = (await call("/api/investigations")).investigations;
+    const all = notifications(500);
+    const tabs = el("nav", { class: "case-tabs", "aria-label": "Filter notifications" }, Object.entries(NOTIF_FILTERS).map(([k, [label, keep]]) =>
+      el("a", { href: `#/notifications/${k}`, "aria-current": k === filter ? "page" : null },
+        label, el("span", { class: "count" }, num(all.filter(keep).length)))));
+    const list = all.filter(NOTIF_FILTERS[filter][1]);
+    if (!list.length) {
+      put(tabs, emptyState(filter === "unread" ? "All caught up" : "No notifications yet",
+        filter === "unread" ? "You have read everything. New results show up here." : "Results of your investigations show up here."));
+      return;
+    }
+    const day = (sec) => { const d = new Date(sec * 1000); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const today = day(Date.now() / 1000), dayMs = 86400000;
+    const label = (t) => t === today ? "Today" : t === today - dayMs ? "Yesterday"
+      : new Date(t).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    const groups = new Map();
+    for (const n of list) { const k = day(n.time); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); }
+    put(tabs, ...[...groups].map(([k, items]) => el("section", { class: "day" },
+      el("h2", { class: "day-title" }, label(k), el("span", { class: "muted" }, `${items.length}`)),
+      el("div", { class: "panel notif-page" }, items.map((n) => notifItem(n))))));
+  }
+  function drawNotifications() {
+    const list = notifications();
+    const unread = list.filter((n) => n.time > readUntil).length;
+    const badge = $("#bell-count");
+    badge.hidden = !unread; badge.textContent = unread > 9 ? "9+" : String(unread);
+    $("#bell").setAttribute("aria-label", unread ? `Notifications, ${unread} unread` : "Notifications");
+    const cn = $("#cnt-notif");
+    if (cn) { cn.hidden = !unread; cn.textContent = num(unread); }
+    $("#notif-list").replaceChildren(...(list.length ? list.slice(0, 8).map((n) => notifItem(n, { onClick: () => toggleNotif(false) }))
+      : [el("p", { class: "muted small notif-empty" }, "Nothing yet. Results of your investigations show up here.")]));
+  }
+  function toggleNotif(open) {
+    const panel = $("#notif-panel");
+    panel.hidden = !open;
+    $("#bell").setAttribute("aria-expanded", String(open));
+  }
+  function markAllRead() {
+    readUntil = Date.now() / 1000;
+    try { localStorage.setItem("aai-notif-read", String(readUntil)); } catch { /* private mode */ }
+    drawNotifications();
+  }
+  /** Desktop alert when an investigation finishes while you are in another tab. */
+  function desktopAlert(title, body) {
+    try { if (document.hidden && "Notification" in window && Notification.permission === "granted") new Notification(title, { body, icon: "/static/img/icon.svg" }); }
+    catch { /* not supported */ }
+  }
+
+  // ---------------------------------------------------------------- attackers and block list
+  const BLOCK_FORMATS = {
+    nginx: ["Nginx", (ip) => `deny ${ip};`],
+    apache: ["Apache", (ip) => `Require not ip ${ip}`],
+    iptables: ["iptables", (ip) => `iptables -A INPUT -s ${ip} -j DROP`],
+    plain: ["Plain list", (ip) => ip],
+  };
+  async function renderAttackers() {
+    setPage("Attackers");
+    loading();
+    const list = attackerList(sideList || (await call("/api/investigations")).investigations);
+    if (!list.length) { put(emptyState("No attackers yet", "Visitors the falcon flags in your logs are gathered here, with a block list you can copy.")); return; }
+    const blocks = list.filter((a) => a.action === "block");
+    let fmt = "nginx";
+    const out = el("pre", { class: "codebox" });
+    const fill = () => { out.textContent = blocks.map((a) => BLOCK_FORMATS[fmt][1](a.ip)).join("\n") || "No visitor needs a block."; };
+    const fmts = el("div", { class: "seg small", role: "radiogroup", "aria-label": "Block list format" }, Object.entries(BLOCK_FORMATS).map(([k, [name]]) => {
+      const b = el("button", { type: "button", role: "radio", "aria-checked": String(k === fmt) }, name);
+      b.addEventListener("click", () => { fmt = k; for (const x of fmts.children) x.setAttribute("aria-checked", String(x === b)); fill(); });
+      return b;
+    }));
+    const copy = el("button", { class: "btn btn-primary btn-small", type: "button" }, "Copy block list");
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(out.textContent); copy.textContent = "Copied"; }
+      catch { copy.textContent = "Select and copy by hand"; }
+      setTimeout(() => { copy.textContent = "Copy block list"; }, 1800);
+    });
+    fill();
+    put(el("section", { class: "kpis four" },
+        kpi("Flagged visitors", num(list.length), `over ${num((sideList || []).length)} logs`),
+        kpi("To block", num(blocks.length), "action: block", "threat"),
+        kpi("To rate-limit", num(list.filter((a) => a.action === "rate_limit").length), "action: rate limit"),
+        kpi("Seen in 2+ logs", num(list.filter((a) => a.logs > 1).length), "came back")),
+      el("div", { class: "grid grid-2" },
+        panel("All flagged visitors", "highest risk seen in any log",
+          el("div", { class: "table-wrap" }, el("table", { class: "t" },
+            el("thead", {}, el("tr", {}, el("th", {}, "Visitor"), el("th", {}, "Risk"), el("th", {}, "Action"), el("th", { class: "hide-sm" }, "Attack types"), el("th", { class: "num" }, "Logs"))),
+            el("tbody", {}, list.map((a) => linkRow(`#/inv/${a.last.id}/visitors`,
+              el("td", { class: "ipcell" }, a.ip),
+              el("td", {}, el("span", { class: `badge lv-${a.risk_level}` }, `${nice(a.risk_level)} ${a.risk_score}`)),
+              el("td", {}, el("span", { class: `badge act-${a.action}` }, nice(a.action))),
+              el("td", { class: "hide-sm small muted" }, [...a.types].map(nice).join(", ") || "behaviour"),
+              el("td", { class: "num" }, a.logs))))))),
+        el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Block list"), copy),
+          el("p", { class: "muted small" }, `${num(blocks.length)} visitors the models say to block. Paste the lines into your server's config.`),
+          fmts, out)));
+  }
+
+  // ---------------------------------------------------------------- search (sidebar box)
+  async function renderSearch() {
+    const q = $("#side-q").value.trim().toLowerCase();
+    setPage(q ? `Search: ${q}` : "Search");
+    const items = sideList || (await call("/api/investigations")).investigations;
+    if (!q) { put(emptyState("Search your logs", "Type a log name or a visitor address in the box on the left.")); return; }
+    const logs = items.filter((it) => (it.filename || "").toLowerCase().includes(q));
+    const ips = attackerList(items).filter((a) => a.ip.toLowerCase().includes(q));
+    if (!logs.length && !ips.length) { put(emptyState("Nothing found", `No log name or flagged visitor matches "${q}".`)); return; }
+    put(el("div", { class: "grid grid-2" },
+      panel("Logs", `${num(logs.length)} found`, logs.length ? recentList(logs) : el("p", { class: "muted" }, "No log name matches.")),
+      panel("Flagged visitors", `${num(ips.length)} found`, ips.length ? el("div", { class: "table-wrap" }, el("table", { class: "t" },
+        el("tbody", {}, ips.map((a) => linkRow(`#/inv/${a.last.id}/visitors`,
+          el("td", { class: "ipcell" }, a.ip),
+          el("td", {}, el("span", { class: `badge lv-${a.risk_level}` }, `${nice(a.risk_level)} ${a.risk_score}`)),
+          el("td", { class: "num small muted" }, `${a.logs} log${a.logs > 1 ? "s" : ""}`)))))) : el("p", { class: "muted" }, "No flagged visitor matches."))));
+  }
+
   async function renderAccount() {
     setPage("Account");
     loading();
@@ -511,12 +827,26 @@
     const code = el("input", { class: "input code", id: "a-code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 7, required: true });
     const msg = el("div", { class: "notice", role: "alert", hidden: true });
     const btn = el("button", { class: "btn btn-primary", type: "submit" }, "Change password");
+    const send = el("button", { class: "btn btn-ghost btn-small", type: "button" }, "Send code to my e-mail");
+    send.addEventListener("click", async () => {
+      send.disabled = true;
+      try {
+        const r = await api("/api/account/code", { method: "POST" });
+        msg.className = "notice ok"; msg.textContent = `Code sent to ${r.sent_to}. It works for 10 minutes.`; msg.hidden = false;
+        code.otpFocus();
+      } catch (err) { msg.className = "notice error"; msg.textContent = err.message; msg.hidden = false; }
+      setTimeout(() => { send.disabled = false; }, 30000);
+    });
     const form = el("form", { class: "form", novalidate: true },
       el("div", { class: "field" }, el("label", { for: "a-cur" }, "Current password"), cur),
-      el("div", { class: "field" }, el("label", { for: "a-new" }, "New password"), nw, el("span", { class: "help" }, "At least 10 characters.")),
-      el("div", { class: "field" }, el("label", { for: "a-new2" }, "Repeat the new password"), nw2),
-      el("div", { class: "field" }, el("label", { for: "a-code" }, "Code from your authenticator app"), code),
+      el("div", { class: "field" },
+        el("div", { class: "field-row" },
+          el("div", { class: "field" }, el("label", { for: "a-new" }, "New password"), nw),
+          el("div", { class: "field" }, el("label", { for: "a-new2" }, "Repeat it"), nw2)),
+        passwordMeter(nw, () => [info.username, info.email || ""])),
+      el("div", { class: "field" }, el("div", { class: "code-row" }, el("label", { for: "a-code" }, "Code from your e-mail"), send), code),
       btn, msg);
+    otp(code);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       msg.hidden = true;
@@ -524,19 +854,21 @@
       btn.disabled = true;
       try {
         await api("/api/account/password", { method: "POST", json: { current_password: cur.value, new_password: nw.value, code: code.value } });
+        cur.value = nw.value = nw2.value = "";
         msg.className = "notice ok"; msg.textContent = "Password changed. Log in again with the new password."; msg.hidden = false;
         setTimeout(() => location.replace("/login"), 1800);
       } catch (err) { msg.className = "notice error"; msg.textContent = err.message; msg.hidden = false; btn.disabled = false; }
-      finally { cur.value = nw.value = nw2.value = code.value = ""; }
+      finally { code.otpReset(); }
     });
     put(el("div", { class: "account" },
       el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Your account")),
         el("dl", { class: "facts" },
           el("dt", {}, "User name"), el("dd", {}, info.username),
+          el("dt", {}, "E-mail"), el("dd", {}, info.email || "None yet"),
           el("dt", {}, "Member since"), el("dd", {}, fmtDate(info.created_at)),
           el("dt", {}, "Last login"), el("dd", {}, fmtDate(info.last_login)),
-          el("dt", {}, "Two-factor login"), el("dd", {}, "On")),
-        el("p", { class: "note", style: "margin-top:18px" }, "Lost your phone? The project team can reset two-factor login on the server.")),
+          el("dt", {}, "Two-step login"), el("dd", {}, "On, codes by e-mail")),
+        el("p", { class: "note", style: "margin-top:18px" }, "Every login needs your password and a code sent to this e-mail.")),
       el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Change password")), form)));
   }
 
@@ -555,10 +887,45 @@
       $("#side").classList.add("open"); $("#scrim").hidden = false; $("#menu").setAttribute("aria-expanded", "true");
     });
     $("#scrim").addEventListener("click", closeMenu);
+    // Collapse the sidebar to icons; remembered in this browser only.
+    const setSlim = (on) => {
+      $("#shell").classList.toggle("slim", on);
+      const b = $("#collapse");
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", on ? "Expand the sidebar" : "Collapse the sidebar");
+      b.title = on ? "Expand the sidebar" : "Collapse the sidebar";
+      try { localStorage.setItem("aai-slim", on ? "1" : "0"); } catch { /* private mode */ }
+    };
+    let slim = false;
+    try { slim = localStorage.getItem("aai-slim") === "1"; } catch { /* private mode */ }
+    setSlim(slim);
+    $("#collapse").addEventListener("click", () => setSlim(!$("#shell").classList.contains("slim")));
     api("/health").then((h) => {
       $("#server .dot").className = `dot ${h.model_loaded ? "ok" : "bad"}`;
-      $("#server span:last-child").textContent = h.model_loaded ? "Models loaded" : "Models not loaded";
-    }).catch(() => { $("#server span:last-child").textContent = "Server not reachable"; });
+      $("#server .lbl").textContent = h.model_loaded ? "Models loaded" : "Models not loaded";
+    }).catch(() => { $("#server .lbl").textContent = "Server not reachable"; });
+    // Notifications: open the panel from the bell; it closes on a click outside or Escape.
+    $("#bell").addEventListener("click", (e) => { e.stopPropagation(); toggleNotif($("#notif-panel").hidden); });
+    $("#notif-panel").addEventListener("click", (e) => e.stopPropagation());
+    $("#notif-read").addEventListener("click", markAllRead);
+    $("#notif-all").addEventListener("click", () => toggleNotif(false));
+    document.addEventListener("click", () => toggleNotif(false));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleNotif(false); });
+    // Search box: results update as you type.
+    const q = $("#side-q");
+    q.addEventListener("input", () => { if (location.hash.startsWith("#/search")) renderSearch(); else location.hash = "#/search"; });
+    q.addEventListener("keydown", (e) => { if (e.key === "Escape") { q.value = ""; q.blur(); location.hash = "#/home"; } });
+    $(".top-search").addEventListener("click", () => q.focus());
+    // Keyboard shortcuts: / search, N new, G then O/I/A.
+    let g = false;
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === "/") { e.preventDefault(); q.focus(); return; }
+      if (g) { g = false; const to = { o: "#/home", i: "#/history", a: "#/attackers" }[k]; if (to) location.hash = to; return; }
+      if (k === "g") { g = true; setTimeout(() => { g = false; }, 1200); return; }
+      if (k === "n") location.hash = "#/new";
+    });
     window.addEventListener("hashchange", route);
     route();
   }

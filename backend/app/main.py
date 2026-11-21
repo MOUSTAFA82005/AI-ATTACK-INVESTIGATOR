@@ -1,16 +1,18 @@
 """FastAPI backend for the AI Attack Investigator."""
 import os
+import re
 import sys
+import threading
+import time
+from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import joblib
 import numpy as np
 import pandas as pd
-from collections import Counter
-import time
-from urllib.parse import urlsplit
-
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exception_handlers import http_exception_handler
@@ -18,6 +20,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+
+# Settings kept on this machine only (e-mail, admin bootstrap): config/mail.env, never committed.
+from backend.app.mailer import load_settings  # noqa: E402
+_loaded = load_settings()
+if _loaded:
+    print(f"[settings] read {', '.join(sorted(_loaded))} from config/mail.env", file=sys.stderr, flush=True)
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
 from ml.detector import MODES, MODEL_PATH, served_files, to_frame  # noqa: E402
@@ -29,13 +37,20 @@ from ml.defense import FixFinder, add_defense, load_block_rules  # noqa: E402
 from ml.outliers import unusual_requests  # noqa: E402
 from ml.explain import reasons  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
-from backend.app.auth import bootstrap_from_env, get_auth, require_user  # noqa: E402
+from backend.app.auth import bootstrap_from_env, get_auth, is_https, require_user  # noqa: E402
 from backend.app import accounts, history  # noqa: E402
 
-app = FastAPI(title="AI Attack Investigator")
+# The API description pages (/docs, /redoc, /openapi.json) are off: they map every endpoint
+# for a stranger. Set AAI_API_DOCS=1 on your own laptop to see them.
+_DOCS = os.environ.get("AAI_API_DOCS") == "1"
+app = FastAPI(title="TALON INVESTIGATOR", docs_url="/docs" if _DOCS else None,
+              redoc_url="/redoc" if _DOCS else None, openapi_url="/openapi.json" if _DOCS else None)
 FRONTEND = ROOT / "frontend"
 MAX_UPLOAD_MB = 50
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_FILENAME = 120                 # characters of the uploaded file's name that are kept
+MAX_JOBS = 2                       # log analyses that may run at the same time (they use the CPU) ...
+MAX_SAVED = 500                    # ... and saved investigations per account
 
 # Loaded once at startup. Train it first with: python -m ml.train_detector
 detector = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
@@ -46,7 +61,7 @@ block_tree = load_block_rules()             # models/block_rules.joblib
 fix_finder = FixFinder()                    # k-NN over the knowledge base, built once
 
 
-if os.environ.get("AAI_ADMIN_USER"):         # hosted demo only; on a laptop use: python -m backend.app.auth create
+if os.environ.get("AAI_ADMIN_EMAIL"):         # hosted demo only; on a laptop use: python -m backend.app.auth create
     bootstrap_from_env(get_auth().store)
 
 
@@ -80,7 +95,11 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
 }
+HSTS = "max-age=31536000"           # sent only over HTTPS: the browser then refuses plain HTTP for a year
+# A request that changes something is refused when the browser says it came from another site.
+SAME_SITE = {"same-origin", "none"}   # "none" = typed in the address bar or a bookmark
 
 
 @app.middleware("http")
@@ -89,11 +108,15 @@ async def security(request: Request, call_next):
     # SameSite=Strict already; this also stops other local pages from posting to us).
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
-        if origin and urlsplit(origin).netloc != request.url.netloc:
+        fetch_site = request.headers.get("sec-fetch-site")
+        if ((origin is not None and urlsplit(origin).netloc != request.url.netloc)
+                or (fetch_site is not None and fetch_site not in SAME_SITE)):
             return JSONResponse({"detail": "Cross-site request refused."}, status_code=403)
     response = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
+    if is_https(request):
+        response.headers.setdefault("Strict-Transport-Security", HSTS)
     if request.url.path.startswith(("/api/", "/me", "/investigate", "/analyze", "/login", "/signup")):
         response.headers["Cache-Control"] = "no-store"      # results never stay in the browser cache
     return response
@@ -110,16 +133,49 @@ def _threshold(mode):
     return MODES[mode]
 
 
-async def _read_and_predict(file: UploadFile, threshold=MODES["sensitive"]):
-    """Shared by /analyze and /investigate.
+def _filename(name):
+    """The uploaded file's name as shown and saved: no folders, no control characters, not too long."""
+    name = re.split(r"[\\/]", name or "")[-1]
+    name = re.sub(r"[\x00-\x1f\x7f]", "", name).strip()
+    return name[:MAX_FILENAME] or "log"
 
-    Checks the model, the file size and the format, parses the log and runs the model.
-    Returns (rows, skipped, fmt). The rows are NOT masked yet: each endpoint masks
-    what it returns, after it has finished its own analysis.
 
-    Every row gets: attack_prob, label, unusual (review mark) and reasons (why the
-    detector called it an attack). unusual and reasons never change the label.
-    """
+class _Jobs:
+    """At most MAX_JOBS analyses at once, and one per account, so one person (or a stolen
+    login) cannot keep the server busy for everybody else."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._running = set()
+
+    def start(self, user_id):
+        with self._lock:
+            if user_id in self._running:
+                raise HTTPException(429, "Your previous log is still being analysed. Wait for it to finish.")
+            if len(self._running) >= MAX_JOBS:
+                raise HTTPException(503, "The server is busy with other logs. Try again in a minute.",
+                                    headers={"Retry-After": "30"})
+            self._running.add(user_id)
+
+    def end(self, user_id):
+        with self._lock:
+            self._running.discard(user_id)
+
+
+jobs = _Jobs()
+
+
+async def _run(user, work, *args):
+    """Run CPU-heavy work in a worker thread (the server keeps answering other requests)."""
+    jobs.start(user["id"])
+    try:
+        return await run_in_threadpool(work, *args)
+    finally:
+        jobs.end(user["id"])
+
+
+async def _read_upload(file: UploadFile):
+    """Checks the model and the file size; returns the raw bytes."""
     if detector is None:
         raise HTTPException(
             503,
@@ -135,7 +191,18 @@ async def _read_and_predict(file: UploadFile, threshold=MODES["sensitive"]):
         )
     if not raw.strip():
         raise HTTPException(400, "The file is empty. Upload an access log that contains at least one line.")
+    return raw
 
+
+def _predict(raw, threshold=MODES["sensitive"]):
+    """Shared by /analyze and /investigate: parses the log and runs the model.
+
+    Returns (rows, skipped, fmt). The rows are NOT masked yet: each endpoint masks
+    what it returns, after it has finished its own analysis.
+
+    Every row gets: attack_prob, label, unusual (review mark) and reasons (why the
+    detector called it an attack). unusual and reasons never change the label.
+    """
     rows, skipped, fmt = parse_log_detailed(decode(raw))
     if fmt is None:
         raise HTTPException(
@@ -173,7 +240,8 @@ async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive"), 
 
     mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8: fewer false alarms, misses more)."""
     threshold = _threshold(mode)
-    rows, skipped, fmt = await _read_and_predict(file, threshold)
+    raw = await _read_upload(file)
+    rows, skipped, fmt = await _run(user, _predict, raw, threshold)
 
     # Mask AFTER the model has seen the original text, so detection does not change.
     for r in rows:
@@ -182,7 +250,7 @@ async def analyze(file: UploadFile = File(...), mode: str = Query("sensitive"), 
 
     attacks = sum(r["label"] == "attack" for r in rows)
     return {
-        "filename": file.filename,
+        "filename": _filename(file.filename),
         "format": fmt,
         "mode": mode,
         "threshold": threshold,
@@ -227,11 +295,20 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
 
     mode: "sensitive" (default, threshold 0.7) or "quiet" (0.8), as in /analyze."""
     threshold = _threshold(mode)
+    store = get_auth().store
+    if save and store.count_investigations(user["id"]) >= MAX_SAVED:
+        raise HTTPException(409, f"You have {MAX_SAVED} saved investigations. Delete some old ones first.")
     started = time.monotonic()
-    rows, skipped, fmt = await _read_and_predict(file, threshold)
+    raw = await _read_upload(file)
+    result = await _run(user, _investigate, raw, threshold, _filename(file.filename), mode)
+    return _finish(result, user, save, started)
 
+
+def _investigate(raw, threshold, filename, mode):
+    """The work behind /investigate (runs in a worker thread)."""
+    rows, skipped, fmt = _predict(raw, threshold)
     result = {
-        "filename": file.filename,
+        "filename": filename,
         "format": fmt,
         "mode": mode,
         "threshold": threshold,
@@ -243,7 +320,7 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
         "sessions": [],
     }
     if not rows:
-        return _finish(result, user, save, started)
+        return result
 
     # Input for analyze_sessions: one row per request, pred = the model's decision.
     df = pd.DataFrame(rows).assign(row=range(len(rows)))[_REQUEST_COLUMNS]
@@ -314,7 +391,7 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
     result["sessions_total"] = len(out)
     result["sessions_flagged"] = sum(s["risk_score"] > 0 for s in out)
     result["sessions"] = out
-    return _finish(result, user, save, started)
+    return result
 
 
 def _finish(result, user, save, started):
