@@ -42,6 +42,7 @@ access log ──► parser ──► detector ──► sessions ──► atta
 |---|---|---|
 | Read the log | Detects the format by itself: combined, vhost, common, W3C/IIS, AWS ALB, JSON lines. UTF-8 or UTF-16. | `backend/app/log_parser.py` |
 | Is this request an attack? | XGBoost (binary) on hand-made, site-independent features of method, path, query and body. Threshold 0.7 ("sensitive", preregistered) or 0.8 ("quiet"). | `ml/detector.py`, `ml/features.py` |
+| Known scanner targets | A list of files scanners look for (backups, dumps, config and version-control files), counted only when the site answered 403/404/410. It marks a scan in the session layer, never a payload attack. | `ml/probes.py` |
 | What is this visitor doing? | XGBoost (normal, brute force, enumeration, scan) on per-visitor behaviour. A visitor is an IP plus a browser with the digits removed, with gaps under 30 minutes. | `ml/context_model.py`, `ml/sessions.py` |
 | Attack type | XGBoost (SQLi, XSS, traversal, command injection, SSTI, SSRF, XXE, ...) | `ml/attack_type.py` |
 | Attack stage | XGBoost (recon, intrusion, exploitation, data theft) | `ml/stage.py` |
@@ -69,7 +70,7 @@ pip install -r requirements.txt
 
 ### 1. Put the models in place
 
-Model files are not in git. Put the frozen v10 set in `models/`:
+Model files are not in git. Put these in `models/`. Since v11 the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`); the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
 
 - `detector.joblib`
 - `context.joblib`
@@ -78,7 +79,7 @@ Model files are not in git. Put the frozen v10 set in `models/`:
 - `block_rules.joblib`
 - `next_step.json`
 
-Ask Safi for them, or train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v10/model_hashes.txt`. Without the models the site still starts, but an upload answers 503.
+Ask Safi for them, or train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v11/model_hashes.txt` (detector) and `results/final_v10/model_hashes.txt` (the rest). Without the models the site still starts, but an upload answers 503.
 
 ### 2. E-mail settings (optional on your own laptop)
 
@@ -181,7 +182,22 @@ Security of the site itself:
 
 All tests below were **preregistered**. The test data was cut and SHA-256 hashed before any model saw it, and each sealed test was run **once**. Nothing was tuned after a sealed result. Every table also reports a **rules-only baseline**: payload rules plus rule-based sessions, as in `eval/rules.py`.
 
-### v10 (final version, tag `v10.0-final-test`)
+### v11 (tag `v11.0-final-test`): the detector retrained with Biblio-US17
+
+v11 = v10 plus training on [Biblio-US17](#reproducibility), the access log of the University of Seville library (Jan to May 2017). This data has only method, URI, status and size: no client address, browser or body. So v11 changes the **payload detector only**; every other model is the v10 one. The sealed test is June 1 to July 17 2017 of the same server, cut and hashed before anyone opened a file.
+
+| Biblio-US17, Jun-Jul 2017 (sealed) | Rules | v10 (never saw this site) | v11 (trained on Jan-May) |
+|---|---|---|---|
+| Recall, macro over 567 attack families (headline) | 0.077 | 0.744 | **0.820** |
+| False alarms, 1,000,000 normal requests | 0 | 0.00004 | **0** |
+| False alarms, requests the signature tools wrongly flagged | 0 | 0.247 | **0.0115** |
+| LVL2/3 recall (secondary, never trained on) | 0 | 0.085 | 0.076 |
+
+The preregistered rule ("v11 recall at least v10 + 0.02, no higher false alarms") was met. The v10 row is an **unseen-site** result. The v11 row is a **same-site** result: it shows that v11 learned this site without losing anything elsewhere, not that it is better on new sites. Before the run, v11 also passed every development check: lab sites, SR-BH, zanbil, ClarkNet and USask are unchanged.
+
+Full table: [`results/final_v11/sealed/SEALED-RESULTS.md`](results/final_v11/sealed/SEALED-RESULTS.md). Post-hoc analysis (analysis only): [`ANALYSIS.md`](results/final_v11/sealed/ANALYSIS.md). The whole gain comes from `../` (file access) families. About half of the families all three systems missed are requests for known scanner targets, which led to `ml/probes.py` (added **after** the sealed test, development evidence only: May recall 0.560 to 0.737, no false alarms on ClarkNet, USask or zanbil).
+
+### v10 (tag `v10.0-final-test`)
 
 False alarms on real traffic from sites **never used in training or development**:
 
@@ -233,7 +249,9 @@ We report these plainly. They are also listed in the report.
 - **RCE recall dropped from v8 to v9** on ModSec-WP (0.907 to 0.683). v10 adds the v8 RCE training rows back. That has not been re-measured on a sealed set.
 - **Session false alarms on logs behind a reverse proxy or NAT.** Many users share one IP there. The v10 visitor split helps on development logs, but the sealed test could not confirm it.
 - **Next-step accuracy on real attackers cannot be measured.** No public data has labelled multi-step attacks.
-- **Known-vulnerable-path probes** (honeypot style) are a signature problem, not a learning problem.
+- **Known-vulnerable-path probes** (honeypot style) are a signature problem, not a learning problem. `ml/probes.py` adds a list for them, but it was written after the v11 sealed test and has no sealed result.
+- **Biblio-US17 LVL2/3 attacks** (context-dependent requests and percent-encoding tricks) are mostly missed: about 0.08 recall for v10 and v11. They were never used in training.
+- **v11 is a same-site result.** Its sealed test is later months of the training site. The evidence for unseen sites is still the v10 sealed test.
 - **Logs without request bodies hide attacks sent in POST bodies.**
 - **Sessions live in server memory.** Restarting the server logs everyone out.
 
@@ -242,7 +260,7 @@ We report these plainly. They are also listed in the report.
 ## Reproducibility
 
 - **Frozen versions are git tags.**
-  - `v10.0-final-test` is the final version. `v9.0-final-test` and `v8.0-final-test` are earlier ones.
+  - `v11.0-final-test` is the latest (v10 + Biblio-US17 detector) and the app's current version: it met the preregistered adoption rule. `v10.0-final-test`, `v9.0-final-test` and `v8.0-final-test` are earlier ones.
   - Each `results/final_vN/` folder has a `PREREGISTRATION.md` with its amendments, `hashes.txt` (the sealed data), `model_hashes.txt` (the exact models), the sealed results and the development checks.
   - Training and evaluation logs of v10 are in `results/final_v10/logs/`.
 - **Sealed data is never opened** before its single run (`data/sealed/`, not committed).
@@ -259,6 +277,9 @@ We report these plainly. They are also listed in the report.
   - ClarkNet
   - USask
   - the Indonesian web server logs
+  - Biblio-US17 (University of Seville, CC BY-NC-ND 4.0, research use, doi:10.12795/11441/148254). Its licence asks that these be cited:
+    - J. E. Díaz-Verdejo, A. Estepa, R. Estepa, G. Madinabeitia, J. Muñoz-Calle. "A methodology for conducting efficient sanitization of HTTP training datasets." *Future Generation Computer Systems* 109, 67-82, 2020. doi:10.1016/j.future.2020.03.033
+    - J. E. Díaz-Verdejo, R. Estepa, A. Estepa, J. Muñoz-Calle, G. Madinabeitia. "Biblio-US17: A large real and labeled URI dataset for website modelling towards anomaly-based intrusion detection systems." (DOI pending)
 - **Training (v10)**, from `data/processed/`:
 
   ```powershell
@@ -270,7 +291,8 @@ We report these plainly. They are also listed in the report.
   ```
 
   The context model of v10 is the v9 one (`python -m ml.train_context`). The exact days and amendments are in `results/final_v10/PREREGISTRATION.md`.
-- **The sealed test:** `python -m eval.v10_sealed_test convert`, then `run --tag v10`, then `report`. It was run once. `convert` checks the hashes first. The steps are in the script's docstring.
+- **Training (v11 detector):** `python -m eval.v11_convert` (Biblio-US17 development months), then `python -m ml.train_detector --v11 train,holdout --out models/detector_v11.joblib`. Details in `results/final_v11/PREREGISTRATION.md`.
+- **The sealed tests:** v10: `python -m eval.v10_sealed_test convert`, then `run --tag v10`, then `report`. v11: `python -m eval.v11_sealed_test convert`, then `run`. Each was run once. `convert` checks the hashes first. The steps are in the scripts' docstrings.
 
 ---
 
@@ -281,7 +303,7 @@ backend/app/   FastAPI app: log parser, /investigate and /analyze, accounts, e-m
 frontend/      Landing page, login, dashboard (plain JS + CSS, no build step, no CDN)
 ml/            Features, models and their training scripts
 eval/          Evaluation scripts: rules baseline, preregistered tests, development checks
-results/       Preregistrations, hashes and results of every frozen version (final_v8, final_v9, final_v10)
+results/       Preregistrations, hashes and results of every frozen version (final_v8 to final_v11)
 lab/           Docker lab (vulnerable apps behind Nginx) and the traffic generator
 notebooks/     Earlier experiments (CSIC baseline, model comparison, SHAP, ...)
 tests/         pytest suite
@@ -298,7 +320,7 @@ data/, models/, config/, var/   Local only (datasets, model files, settings, acc
 python -m pytest tests
 ```
 
-There are 250 tests. They cover:
+There are 280 tests. They cover:
 
 - the parser on every format;
 - the features and every model step;

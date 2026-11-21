@@ -5,7 +5,7 @@ v11 SEALED TEST (results/final_v11/PREREGISTRATION.md + Amendment 1). Run ONCE, 
     python -m eval.v11_sealed_test run        # model hash check, rules + v10 + v11 -> results/final_v11/sealed/SEALED-RESULTS.md
 
 Both detectors share the same feature code (v11 only adds training data), so one tree runs both:
-v10 = models/detector.joblib (frozen, hash in results/final_v10/model_hashes.txt), v11 = models/detector_v11.joblib.
+v10 = the frozen v10 detector (hash in results/final_v10/model_hashes.txt), v11 = models/detector_v11.joblib.
 Only numbers go to results/. Converted rows (real URIs) stay in data/processed/ (git-ignored).
 Sets (same definitions as dev, eval/v11_convert.py): attack = LVL1 deduplicated by (method, URI); clean = uniform
 random sample of 1,000,000 clean rows (seed 11); fp = rows the signature tools flagged, judged normal (ManualTP = 0),
@@ -30,7 +30,9 @@ if DRY:
 N_SEALED = 235                          # 47 days x 5 sets
 CLEAN_N = int(os.environ.get("V11_CLEAN_N", 1_000_000)) if DRY else 1_000_000
 SEED = 11
-MODELS = {"v10": Path("models/detector.joblib"), "v11": Path("models/detector_v11.joblib")}
+# At the run (commit 087b465) v10 was models/detector.joblib. v11 became the app detector after the run, so the
+# frozen v10 file now lives in models/v10_backup/ (same hash).
+MODELS = {"v10": Path("models/v10_backup/detector.joblib"), "v11": Path("models/detector_v11.joblib")}
 BETTER_RECALL = 0.02
 
 
@@ -75,7 +77,7 @@ def verify_models():
         return
     bad = _check(_read_hashes("results/final_v11/model_hashes.txt"), Path("."))
     v10 = _read_hashes("results/final_v10/model_hashes.txt")["models/detector.joblib"]
-    bad += [] if _sha256(MODELS["v10"]) == v10 else ["models/detector.joblib is not the frozen v10 detector"]
+    bad += [] if _sha256(MODELS["v10"]) == v10 else [f"{MODELS['v10']} is not the frozen v10 detector"]
     if bad:
         raise SystemExit(f"Stopped: model hash problem {bad}. Nothing was measured.")
     print("models: hashes ok")
