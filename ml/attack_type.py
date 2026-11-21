@@ -18,6 +18,8 @@ baseline, and used when no model file exists.
 
 See notebooks/08_attack_type.ipynb and notebooks/20_learned_models.ipynb.
 """
+import re
+
 import joblib
 import pandas as pd
 
@@ -87,15 +89,40 @@ def type_features(methods, paths, bodies):
     return pd.concat([X, S], axis=1)
 
 
+# Server-side code injection (PHP): the request carries program code, not a shell command, so neither
+# the model nor the patterns have a family for it ("/**/" inside the code even reads as an SQL
+# comment). It executes code on the server like command injection, so it is typed "cmdi" (shown as
+# command / code execution). Only PHP-specific signs count: eval( / system( / popen( also appear in
+# XSS (JavaScript) and SSTI (Python) payloads, which keep their own type. Added after the v11 sealed
+# test (post-hoc, product only: a real PHP web-shell upload in a demo log was typed sqli); no reported
+# number uses it.
+_CODE = re.compile(
+    r"<\?(?:php\b|=)"                                                    # PHP open tag
+    r"|\b(?:passthru|shell_exec|proc_open|pcntl_exec|file_put_contents|base64_decode|gzinflate|"
+    r"str_rot13|call_user_func(?:_array)?|create_function)\s*\("           # PHP-only functions
+    r"|\\think\\app/invokefunction|function=call_user_func",                 # ThinkPHP RCE
+    re.I)
+_KEEP = {"ssti", "xxe", "log4shell", "cmdi"}         # already a code-execution type: keep it
+
+
+def is_code_injection(path, body=""):
+    """The request carries server-side program code (PHP open tag or a code-execution function call)."""
+    text = _dec(str(path or "")) + "\n" + _dec(str(body or ""))
+    return bool(_CODE.search(text))
+
+
 def attack_types(methods, paths, bodies, model=None):
     """One type per request. Call it only for requests flagged as attacks.
-    With the trained model, the model decides; without it, rule_types()."""
+    With the trained model, the model decides; without it, rule_types().
+    Server-side code injection is always "cmdi" (see _CODE)."""
     methods, paths, bodies = list(methods), list(paths), list(bodies)
     if not paths:
         return []
     if model is not None and getattr(model, "n_classes_", None) == len(CLASSES):
-        return [CLASSES[i] for i in model.predict(type_features(methods, paths, bodies))]
-    return rule_types(methods, paths, bodies, model)
+        out = [CLASSES[i] for i in model.predict(type_features(methods, paths, bodies))]
+    else:
+        out = rule_types(methods, paths, bodies, model)
+    return [t if t in _KEEP or not is_code_injection(p, b) else "cmdi" for t, p, b in zip(out, paths, bodies)]
 
 
 def rule_types(methods, paths, bodies, model=None):

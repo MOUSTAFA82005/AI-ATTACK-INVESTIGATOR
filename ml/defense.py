@@ -28,7 +28,7 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 
-from ml.attack_type import TYPES
+from ml.attack_type import TYPES, is_code_injection
 from ml.detector import ROOT
 from ml.knowledge_base import KNOWLEDGE_BASE
 from ml.sessions import field_names, is_login_attempt
@@ -175,6 +175,7 @@ _CRS = {"sqli": "942 (SQL injection)", "xss": "941 (XSS)", "traversal": "930 (lo
 # appears in normal text, e.g. "Great value; $5"). Checked on the dev runs in notebook 12.
 _CMDI = (r'@rx (?i)(?:[;|`\n]|&&|&\s|\$\()\s*'
          r'(?:cat|ls|id|whoami|uname|ifconfig|ipconfig|netstat|ping|sleep|wget|curl|nc|bash|sh|echo|type|dir)\b')
+_SHELL = re.compile(_CMDI[len("@rx (?i)"):], re.I)
 # The newer families: the attack syntax itself (the same idea as the patterns in ml/features.py).
 _NEW_OPERATOR = {
     "ssrf": r"@rx (?i)(?:gopher|dict|file|ldap|tftp)://|(?:https?|ftp)://(?:[^/?#@]*@)?(?:localhost|127\.|"
@@ -240,6 +241,48 @@ def waf_rules(ip, action, steps, rule_id=1000001):
 
 
 # ------------------------------------------------------------------ all together
+# Fixed rule above the tree (added after the v11 sealed test, post-hoc, product only; no reported number
+# uses it): ONE request that tries to run code or commands on the server is enough to block. The tree
+# learned "one attack request = allow" (risk 15), which is right for a stray SQLi/XSS-looking request
+# (most false alarms look like that) but not for a confident code-execution payload: a web shell
+# upload in a real demo log was shown as low risk / allow.
+CODE_EXEC_TYPES = {"log4shell", "ssti", "xxe"}   # these always run code; "cmdi" needs the evidence below
+CODE_EXEC_MIN_PROB = 0.9
+CODE_EXEC_RISK = 70                          # "high"
+
+
+def runs_code(path, body, type_pred):
+    """The request itself shows code execution: server-side program code (ml/attack_type.py), a shell
+    separator followed by a command name (the same pattern as the WAF rule below), or a family that
+    always runs code. A request the type model calls cmdi without that evidence does not count: old
+    CGI query strings such as "?-f|test" were typed cmdi on ClarkNet and USask normal traffic."""
+    if type_pred in CODE_EXEC_TYPES or is_code_injection(path, body):
+        return True
+    return type_pred == "cmdi" and bool(_SHELL.search(_values(path, body)))
+
+
+def code_execution_sessions(req):
+    """Sessions with at least one confident code-execution payload (see runs_code)."""
+    prob = req["attack_prob"] if "attack_prob" in req else req.get("proba", pd.Series(1.0, index=req.index))
+    cand = req[(req["pred"] == 1) & (pd.to_numeric(prob, errors="coerce") >= CODE_EXEC_MIN_PROB)]
+    hit = [runs_code(p, b, t) for p, b, t in zip(cand["path"], cand["body"], cand["type_pred"])]
+    return cand.loc[hit, "session"].unique().tolist() if len(cand) else []
+
+
+def escalate_code_execution(req, sessions):
+    """Raise the risk of code-execution sessions to at least high (a copy of sessions)."""
+    sessions = sessions.copy()
+    hit = sessions["session"].isin(code_execution_sessions(req)) & (sessions["risk_score"] < CODE_EXEC_RISK)
+    for i in sessions.index[hit]:
+        sessions.at[i, "risk_score"] = CODE_EXEC_RISK
+        if sessions.at[i, "risk_level"] != "critical":
+            sessions.at[i, "risk_level"] = "high"
+        if "reasons" in sessions:
+            sessions.at[i, "reasons"] = list(sessions.at[i, "reasons"]) + [
+                "a request tries to run code or commands on the server (high risk even once)"]
+    return sessions
+
+
 def add_defense(req, sessions, finder=None, tree=None, k=2):
     """
     Per session: `action` (block / rate_limit / allow), `action_reason`, `fixes` (per step:
@@ -252,7 +295,7 @@ def add_defense(req, sessions, finder=None, tree=None, k=2):
     """
     finder = finder or FixFinder()
     steps = step_rows(req)
-    sessions = sessions.copy()
+    sessions = escalate_code_execution(req, sessions)
     x = session_features(sessions, req)
     if tree is not None:
         actions = pd.Series(tree.predict(x), index=x.index)
@@ -260,6 +303,7 @@ def add_defense(req, sessions, finder=None, tree=None, k=2):
         level = sessions.set_index("session")["risk_level"]
         actions = level.map({"critical": "block", "high": "block", "medium": "rate_limit"}).fillna("allow")
     level = sessions.set_index("session")["risk_level"]
+    code_exec = set(code_execution_sessions(req))
     out_action, out_reason, out_fixes, out_rules = [], [], [], []
     for n, (sid, ip) in enumerate(zip(sessions["session"], sessions["ip"])):
         st = steps.get(sid, {})
@@ -267,6 +311,8 @@ def add_defense(req, sessions, finder=None, tree=None, k=2):
         reason = "block-rule tree" if tree is not None else "risk level (no trained tree)"
         if st and level.get(sid) == "critical" and action != "block":
             action, reason = "block", "critical: the attack worked (exploitation or data theft)"
+        elif st and sid in code_exec and action != "block":
+            action, reason = "block", "a request tried to run code or commands on the server"
         if not st:
             reason = "no attack seen"
         fixes = []
