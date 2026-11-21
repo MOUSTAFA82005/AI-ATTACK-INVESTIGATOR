@@ -1,0 +1,44 @@
+# run7 final results
+
+Frozen v8 models, run once, measured as fixed in `PREREGISTRATION.md`. ML = learned pipeline (`model + sessions`), rules = baseline (`rules + rule sessions`). Every number is reported whatever it shows.
+
+## 1. Lab sites (WebGoat = unseen site)
+
+| site | seen in training | log_lines | matched | attacks | normal requests | recall ML | recall rules | FA normal users ML | FA normal users rules | FA in attacker sessions ML | FA in attacker sessions rules | type acc ML | type acc rules | typed requests |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| juiceshop | True | 6321 | 6321 | 2749 | 3572 | 1.0 | 0.981 | 0 | 0 | 2 | 1 | 0.94 | 0.96 | 997 |
+| dvwa | True | 5566 | 5553 | 2715 | 2838 | 0.995 | 0.975 | 0 | 0 | 0 | 0 | 0.954 | 0.955 | 999 |
+| bwapp | True | 4650 | 4647 | 2697 | 1950 | 0.992 | 0.97 | 0 | 0 | 0 | 0 | 0.963 | 0.977 | 1012 |
+| mutillidae | True | 4442 | 4362 | 2622 | 1740 | 0.996 | 0.994 | 0 | 29 | 2 | 114 | 0.939 | 0.96 | 994 |
+| dvna | True | 4734 | 4602 | 2597 | 2005 | 0.988 | 0.972 | 0 | 0 | 0 | 0 | 0.961 | 0.974 | 1007 |
+| vampi | True | 4625 | 4625 | 2734 | 1891 | 0.988 | 0.598 | 0 | 0 | 13 | 16 | 0.874 | 0.593 | 997 |
+| dvga | True | 4674 | 4626 | 2708 | 1918 | 0.995 | 0.692 | 0 | 0 | 10 | 3 | 0.938 | 0.952 | 1020 |
+| webgoat | False | 5105 | 4987 | 2716 | 2271 | 0.728 | 0.982 | 0 | 0 | 0 | 0 | 0.956 | 0.976 | 987 |
+
+### Stage and defence
+
+| site | stage requests | stage acc ML | stage acc rules | furthest ML | furthest rules | exploitation found ML/rules | defence action right ML | defence action right rules | defence attackers allowed ML | defence attackers allowed rules | defence normal users blocked ML | defence normal users blocked rules |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| juiceshop | 2748 | 0.999 | 0.925 | 0.987 | 0.921 | 1.00/0.00 (n=13) | 1.0 | 0.795 | 0.0 | 0.0 | 0.0 | 0.0 |
+| dvwa | 2702 | 0.969 | 0.637 | 0.986 | 0.597 | 0.99/0.00 (n=255) | 1.0 | 0.731 | 0.0 | 0.0 | 0.0 | 0.0 |
+| bwapp | 2675 | 0.985 | 0.736 | 0.975 | 0.72 | 0.97/0.00 (n=130) | 1.0 | 0.704 | 0.0 | 0.0 | 0.0 | 0.0 |
+| mutillidae | 2612 | 0.958 | 0.93 | 0.908 | 0.705 | 0.72/0.00 (n=183) | 0.993 | 0.7 | 1.0 | 1.0 | 0.0 | 0.0 |
+| dvna | 2565 | 0.975 | 0.927 | 0.986 | 0.569 | 0.90/0.00 (n=186) | 1.0 | 0.702 | 0.0 | 0.0 | 0.0 | 0.0 |
+| vampi | 2702 | 1.0 | 0.982 | 1.0 | 0.864 | 1.00/0.00 (n=48) | 0.991 | 0.785 | 4.0 | 4.0 | 0.0 | 0.0 |
+| dvga | 2694 | 0.99 | 0.895 | 0.996 | 0.844 | 0.97/0.84 (n=38) | 0.993 | 0.703 | 1.0 | 1.0 | 0.0 | 0.0 |
+| webgoat | 1978 | 0.977 | 0.98 | 0.956 | 0.971 | 0.00/1.00 (n=7) | 0.939 | 0.631 | 27.0 | 27.0 | 0.0 | 0.0 |
+
+### Next step (ceiling 0.38 from the generator's random choice)
+
+| site | next campaigns | next top-1 (true order) | next top-3 (true order) | next top-1 (order read) | next top-3 (order read) |
+|---|---|---|---|---|---|
+| juiceshop | 60.0 | 0.279 | 0.849 | 0.0 | 0.667 |
+| dvwa | 60.0 | 0.279 | 0.849 | 0.0 | 0.714 |
+| bwapp | 60.0 | 0.279 | 0.849 |  |  |
+| mutillidae | 60.0 | 0.279 | 0.849 | 1.0 | 1.0 |
+| dvna | 60.0 | 0.279 | 0.849 |  |  |
+| vampi | 60.0 | 0.279 | 0.849 | 0.0 | 1.0 |
+| dvga | 60.0 | 0.279 | 0.849 | 0.0 | 0.75 |
+| webgoat | 60.0 | 0.279 | 0.849 |  |  |
+
+Run time: 89 s.

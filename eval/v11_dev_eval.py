@@ -17,7 +17,7 @@ import joblib
 import pandas as pd
 
 from eval.rules import rule_predict
-from ml.detector import ROOT, to_frame
+from ml.detector import ROOT, attack_proba, to_frame
 
 V11 = ROOT / "data" / "processed" / "v11"
 OUT = ROOT / "results" / "final_v11" / "dev"
@@ -45,7 +45,7 @@ def load(name, split):
 def flags(df, model, threshold):
     if model is None:
         return pd.Series(rule_predict(df["method"].tolist(), df["path"].tolist(), [""] * len(df)), dtype=bool)
-    p = model.predict_proba(to_frame(df["method"], df["path"], [""] * len(df)))[:, 1]
+    p = attack_proba(model, to_frame(df["method"], df["path"], [""] * len(df)), df["method"], df["path"], [""] * len(df))
     return pd.Series(p >= threshold)
 
 

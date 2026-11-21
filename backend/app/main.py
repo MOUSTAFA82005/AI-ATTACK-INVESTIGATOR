@@ -28,7 +28,7 @@ if _loaded:
     print(f"[settings] read {', '.join(sorted(_loaded))} from config/mail.env", file=sys.stderr, flush=True)
 
 from backend.app.log_parser import FORMATS, decode, parse_log_detailed  # noqa: E402
-from ml.detector import MODES, MODEL_PATH, served_files, to_frame  # noqa: E402
+from ml.detector import MODES, MODEL_PATH, attack_proba, served_files, to_frame  # noqa: E402
 from ml.sessions import analyze_sessions  # noqa: E402
 from ml.context_model import load_context_model  # noqa: E402
 from ml.attack_type import attack_types, load_type_model  # noqa: E402
@@ -220,7 +220,8 @@ def _predict(raw, threshold=MODES["sensitive"]):
     if rows:
         # Everything below works on the ORIGINAL (unmasked) text.
         X = to_frame([r["method"] for r in rows], [r["path"] for r in rows], [r["body"] for r in rows])
-        probs = detector.predict_proba(X)[:, 1]
+        probs = attack_proba(detector, X, [r["method"] for r in rows], [r["path"] for r in rows],
+                             [r["body"] for r in rows])
         pred = (probs >= threshold).astype(int)
 
         # A real file that the site served to a visitor is not a probe (same as eval/final_test.py).
@@ -231,7 +232,7 @@ def _predict(raw, threshold=MODES["sensitive"]):
         pred[served] = 0
         # Known scanner targets the site does not have (ml/probes.py): no payload, so the session layer
         # marks them as a scan (they never become payload attacks).
-        probe = probe_rows(frame["path"], frame["status"])
+        probe = probe_rows(frame["path"], frame["status"], [r["method"] for r in rows])
 
         unusual = np.asarray(unusual_requests(X), dtype=bool) | served   # one call per log
         why = reasons(detector, X)                                        # one call per log

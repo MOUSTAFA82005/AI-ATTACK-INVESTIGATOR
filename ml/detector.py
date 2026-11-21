@@ -103,6 +103,29 @@ def served_files(df, X, pred):
     return (cand & ~other_alarm) | page
 
 
+# v12: a path that holds a quoted link ("http://site/" written into the URL, usually %22http://...%22) is a broken
+# link on some page, which crawlers follow (secrepo Nov 2026 dev days: MJ12bot asked for
+# /honeypot//%22http://glastopf.org//%22 and was blocked as SQL injection, 5 of 8 flagged visitors). The quote marks
+# make it look like an injection. Such a request is scored again with the quoted link taken out, and the lower
+# score is kept. Only a plain link is taken out (scheme, host and path letters; no quote, space, bracket or query),
+# so a payload written inside quotes keeps its score.
+QUOTED_LINK = re.compile(r'(?:%22|")https?://[A-Za-z0-9._~/:-]+(?:%22|")', re.I)
+
+
+def attack_proba(detector, X, methods, paths, bodies):
+    """Detector probability for each request, with quoted links re-scored (see QUOTED_LINK)."""
+    proba = np.asarray(detector.predict_proba(X)[:, 1], dtype=float).copy()
+    paths = [str(p or "") for p in paths]
+    idx = [i for i, p in enumerate(paths) if QUOTED_LINK.search(p.split("?", 1)[0])]
+    if idx:
+        methods, bodies = list(methods), list(bodies)
+        fixed = [QUOTED_LINK.sub("", paths[i].split("?", 1)[0]) + (("?" + paths[i].split("?", 1)[1]) if "?" in paths[i] else "")
+                 for i in idx]
+        again = detector.predict_proba(to_frame([methods[i] for i in idx], fixed, [bodies[i] for i in idx]))[:, 1]
+        proba[idx] = np.minimum(proba[idx], again)
+    return proba
+
+
 def build_pipeline(hand_cols, pos_weight=1.0, n_jobs=2, use_tfidf=False):
     """use_tfidf=True also adds character n-grams of the user values."""
     parts = [("hand", "passthrough", hand_cols)]

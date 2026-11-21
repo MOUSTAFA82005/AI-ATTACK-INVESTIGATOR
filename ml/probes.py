@@ -39,9 +39,24 @@ _NAMES = [
     r"/wp-includes/wlwmanifest\.xml$", r"/(user|admin)/config\.php$",
     r"/(owa|ecp|autodiscover)/", r"/(actuator|jmx-console|web-console|manager/html|solr/admin)(/|$)",
     r"/(vendor/phpunit|phpunit)/", r"/(_profiler|telescope|elmah\.axd|trace\.axd)(/|$)",
+    # v12: endpoints of known exploits, as public exploit scanners request them (projectdiscovery nuclei-templates,
+    # vendor advisories). Found missing on secrepo Nov 2026 DEV days (02/12/17), nothing from the sealed days.
+    r"/api/session/properties$", r"/api/setup/validate$",                     # Metabase pre-auth RCE CVE-2023-38646
+    r"/ueditor/(net/|php/|jsp/|asp/)?controller\.(ashx|php|jsp|aspx?)$",    # UEditor upload / SSRF
+    r"/plus/(download|recommend|ad_js|mytag_js)\.php$",                      # DedeCMS
+    r"/_ignition/execute-solution$",                                        # Laravel CVE-2021-3129
+    r"/(boaform|gponform)/", r"/hnap1/?$", r"/cgi-bin/luci/;stok=",          # router / IoT exploits
+    r"/(wls-wsat|_async)/", r"/console/login/loginform\.jsp$",               # WebLogic
+    r"/(druid/index\.html|nacos/v1/auth/)", r"/remote/fgt_lang$", r"/dana-na/",  # Druid, Nacos, Fortinet, Pulse
 ]
+# v12: backup folders guessed by WordPress-install finders. Counted only for HEAD (the tool asks whether the folder
+# exists without wanting the page); a browser that opens /backup/ by mistake sends GET (the lab normal users of
+# Mutillidae do, run7).
+_HEAD_ONLY = re.compile(r"^/(backup|backups|bak|bk|bc)/?$", re.I)
 _KNOWN = re.compile("|".join(f"(?:{p})" for p in _NAMES), re.I)
-NOT_THERE = {403, 404, 410}
+# v12: 429 (refused, too many requests) added: on secrepo the site answers scanners 429, so the probe was never
+# counted (Metabase probes answered only 429).
+NOT_THERE = {403, 404, 410, 429}
 
 
 def is_known_name(path):
@@ -49,19 +64,25 @@ def is_known_name(path):
     return bool(_KNOWN.search(str(path or "").split("?", 1)[0].split("#", 1)[0]))
 
 
-def known_probe(path, status):
+def known_probe(path, status, method=None):
     """A known scanner target that the site does not have or does not allow."""
     try:
         status = int(status)
     except (TypeError, ValueError):
         return False
-    return status in NOT_THERE and is_known_name(path)
+    if status not in NOT_THERE:
+        return False
+    if is_known_name(path):
+        return True
+    bare = str(path or "").split("?", 1)[0].split("#", 1)[0]
+    return str(method or "").upper() == "HEAD" and bool(_HEAD_ONLY.search(bare))
 
 
 PROBE_REASON = "Asked for a file that scanners look for (a backup, a dump, a config or version-control file), and the site does not have it"
 
 
-def probe_rows(paths, statuses):
+def probe_rows(paths, statuses, methods=None):
     """Boolean array: known_probe for each request."""
     import numpy as np
-    return np.array([known_probe(p, s) for p, s in zip(paths, statuses)], dtype=bool)
+    methods = [None] * len(paths) if methods is None else list(methods)
+    return np.array([known_probe(p, s, m) for p, s, m in zip(paths, statuses, methods)], dtype=bool)

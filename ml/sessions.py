@@ -157,9 +157,11 @@ def _is_probe(method, path):
 # reverse proxy put all visitors of a site on 1-3 IPs and the session layer flagged 75-87% of normal
 # requests there (results/final_v10/dev/SESSION_DIAG.md). A tool keeps one user agent, so it stays one
 # visitor. A tool that changes its user agent on every request is split into many short visits
-# (stated in the report as a limitation).
+# (stated in the report as a limitation; v12 merges them back, see visitor_key).
 SPLIT_BY_AGENT = True
 _DIGITS = re.compile(r"\d+")
+ROTATE_MIN_AGENTS = 4     # v12: at least this many agents on one IP ...
+ROTATE_RATIO = 0.4        # ... and at least one new agent per 2.5 requests -> one visitor (the IP)
 
 
 def visitor_key(df):
@@ -171,7 +173,14 @@ def visitor_key(df):
     # v10 Amendment 3: digits are removed first. Scanners such as nikto put a test number in
     # the user agent ("(Test:000123)"), which would make every request a new visitor.
     tag = ua.map(lambda u: format(zlib.crc32(_DIGITS.sub("", u).encode("utf-8", "replace")), "08x"))
-    return ip.where(ua.isin(["", "-"]), ip + "|" + tag)
+    key = ip.where(ua.isin(["", "-"]), ip + "|" + tag)
+    # v12: an IP that shows a new user agent every one or two requests is one tool that rotates its agent, not
+    # many people (secrepo Nov 2026 dev: 14 HEAD requests /old /blog /wp /backup ... with 7 browser agents).
+    # People behind one proxy each keep their agent for many requests, so their ratio stays low.
+    agents = tag.groupby(ip).transform("nunique")
+    count = ip.groupby(ip).transform("size")
+    rotating = (agents >= ROTATE_MIN_AGENTS) & (agents >= ROTATE_RATIO * count)
+    return key.where(~rotating, ip)
 
 
 def add_session_ids(df):
