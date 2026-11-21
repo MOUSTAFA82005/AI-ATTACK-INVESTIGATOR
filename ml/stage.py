@@ -151,8 +151,9 @@ def stage_features(req):
     page_sess = [req["session"], ep]
     f["size_vs_session_page"] = np.log1p(size) - np.log1p(size.groupby(page_sess).transform("median"))
     answer = st.astype(str) + ":" + (size // 256).astype(int).astype(str)
-    f["answer_share_session_page"] = answer.groupby(page_sess).transform(
-        lambda a: a.map(a.value_counts(normalize=True)))
+    # Share of this answer among the session's answers for the page (same as value_counts(normalize=True)).
+    f["answer_share_session_page"] = (answer.groupby(page_sess + [answer]).transform("size")
+                                      / answer.groupby(page_sess).transform("size"))
     f["payload"] = req["pred"].astype(int)
     for b in BEHAVIOURS:
         f["beh_" + b] = (req["behaviour"] == b).astype(int)

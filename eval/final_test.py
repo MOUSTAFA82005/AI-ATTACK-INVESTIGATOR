@@ -19,6 +19,7 @@ from eval.rules import rule_predict
 from ml.attack_type import TYPES, attack_types, load_type_model
 from ml.defense import FixFinder, add_defense, load_block_rules
 from ml.detector import DETECTOR_THRESHOLD, MODEL_PATH, served_files, to_frame
+from ml.probes import probe_rows
 from ml.next_step import NextStepModel, add_next_steps, merge_steps
 from ml.outliers import unusual_requests
 from ml.context_model import load_context_model
@@ -60,6 +61,9 @@ def _pipeline(df, drop_body=False):
     df["pred"] = (df["proba"] >= DETECTOR_THRESHOLD).astype(int)
     served = served_files(df, X, df["pred"])
     df.loc[served, "pred"] = 0
+    # Known scanner targets the site does not have (ml/probes.py): no payload, so the session layer
+    # marks them as a scan (they never become payload attacks).
+    df["known_probe"] = probe_rows(df["path"], df["status"])
     df["unusual"] = unusual_requests(X) | served
     df["rules"] = rule_predict(df["method"], df["path"], df["body"])
     df["_key"] = range(len(df))                     # to line up the two session runs

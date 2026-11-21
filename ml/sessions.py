@@ -255,6 +255,12 @@ def _one_session(s, learned=None):
             score += 30
             reasons.append(f"{stats['probes']} probes for hidden files, {missing} not-found answers"
                            + (f" ({stats['soft_not_found']} of them the site's catch-all page)" if stats["soft_not_found"] else ""))
+    known = int(s["known_probe"].sum()) if "known_probe" in s else 0     # ml/probes.py
+    if known and "scan" not in behaviours:
+        behaviours.append("scan")
+        score += 30
+        reasons.append(f"{known} request{'s' if known > 1 else ''} for files that scanners look for "
+                       "(backups, dumps, config or version-control files) that the site does not have")
     if stats["server_errors"] >= MIN_SERVER_ERRORS and score:
         score += 10
         reasons.append(f"{stats['server_errors']} server errors")
@@ -327,6 +333,8 @@ def analyze_sessions(df, context_model=None):
     else:
         for name in reversed(list(marks)):           # bruteforce wins over enumeration over scan
             d.loc[marks[name], "behaviour"] = name
+    if "known_probe" in d:                            # a known scanner target is part of the scan
+        d.loc[d["known_probe"].astype(bool) & (d["behaviour"] == ""), "behaviour"] = "scan"
     d["session_attack"] = (d["behaviour"] != "").astype(int)
     d = d.drop(columns=["_t", "_path0", "_soft404", "_login", "_res", "_id", "_visitor"])
     return sessions.sort_values("risk_score", ascending=False, kind="stable").reset_index(drop=True), d

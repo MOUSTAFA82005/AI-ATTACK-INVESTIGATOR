@@ -36,6 +36,7 @@ from ml.next_step import NextStepModel, add_next_steps  # noqa: E402
 from ml.defense import FixFinder, add_defense, load_block_rules  # noqa: E402
 from ml.outliers import unusual_requests  # noqa: E402
 from ml.explain import reasons  # noqa: E402
+from ml.probes import PROBE_REASON, probe_rows  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 from backend.app.auth import bootstrap_from_env, get_auth, is_https, require_user  # noqa: E402
 from backend.app import accounts, history  # noqa: E402
@@ -222,15 +223,21 @@ def _predict(raw, threshold=MODES["sensitive"]):
                               "status": [r["status"] for r in rows]})
         served = np.asarray(served_files(frame, X, pred), dtype=bool)
         pred[served] = 0
+        # Known scanner targets the site does not have (ml/probes.py): no payload, so the session layer
+        # marks them as a scan (they never become payload attacks).
+        probe = probe_rows(frame["path"], frame["status"])
 
         unusual = np.asarray(unusual_requests(X), dtype=bool) | served   # one call per log
         why = reasons(detector, X)                                        # one call per log
 
-        for r, p, is_attack, odd, sentences, was_served in zip(rows, probs, pred, unusual, why, served):
+        for r, p, is_attack, odd, sentences, was_served, is_probe in zip(rows, probs, pred, unusual, why, served, probe):
             r["attack_prob"] = round(float(p), 3)
             r["label"] = "attack" if is_attack else "normal"
             r["unusual"] = bool(odd)
+            r["known_probe"] = bool(is_probe)
             r["reasons"] = [] if was_served else list(sentences)   # a request called normal has no reasons
+            if is_probe:
+                r["reasons"].append(PROBE_REASON)
     return rows, skipped, fmt
 
 
@@ -286,7 +293,7 @@ def _clean(value):
 # "row" = the position of the request in `rows`; it lets us find the unusual mark and the
 # reasons of a request again after analyze_sessions has re-ordered everything.
 _REQUEST_COLUMNS = ["ip", "timestamp", "method", "path", "status", "size", "body",
-                    "attack_prob", "label", "row"]
+                    "attack_prob", "label", "known_probe", "row"]
 
 @app.post("/investigate")
 async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive"), save: bool = Query(True),

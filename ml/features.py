@@ -9,6 +9,7 @@ Two levels:
 These are the features YOU design from your knowledge of attacks. They are
 combined with TF-IDF character n-grams (the automatic part) before training.
 """
+import functools
 import math
 import re
 from collections import Counter
@@ -344,7 +345,14 @@ def path_values(url):
 
 
 def value_features(method, url, body="", user_agent=""):
-    """Site-independent numeric features for one request (see note above)."""
+    """Site-independent numeric features for one request (see note above).
+    Cached: the dashboard asks for the same request several times (detector, attack type, sessions, stage).
+    Returns a fresh dict each call, so a caller can change it without touching the cache."""
+    return dict(_value_features(str(method or ""), str(url or ""), str(body or ""), str(user_agent or "")))
+
+
+@functools.lru_cache(maxsize=16384)   # about 40 MB; a bigger log only loses the speed-up
+def _value_features(method, url, body, user_agent):
     url = str(url or "")
     path = _dec(url.split("?", 1)[0])
     vals = user_values(url, body) + path_values(url)
