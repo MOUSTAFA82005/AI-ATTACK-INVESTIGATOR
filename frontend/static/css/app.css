@@ -3,7 +3,7 @@
 .side { margin: 14px 0 14px 14px; padding: 22px 14px 16px; display: flex; flex-direction: column; gap: 16px;
         position: sticky; top: 14px; height: calc(100vh - 28px); align-self: start; border-radius: var(--r-xl); }
 .side .brand { padding: 0 8px; font-size: 16px; }
-.side-new { width: 100%; }
+.side-new { width: 100%; flex: none; }
 .side-nav { display: grid; gap: 2px; }
 .side-nav a { position: relative; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: var(--r-m); color: var(--muted);
               text-decoration: none; font-weight: 500; font-size: 15px; transition: color .2s, background .25s, transform .25s var(--ease); }
@@ -421,3 +421,13 @@ dl.facts dd { margin: 0; }
 .notif-page .nt strong { font-size: 15px; }
 .notif-all { display: block; text-align: center; padding: 10px; margin-top: 4px; border-top: 1px solid var(--line); color: var(--accent); font-size: 13.5px; font-weight: 500; text-decoration: none; }
 .notif-all:hover { color: var(--text); }
+/* Sidebar fits the window and never scrolls: only the Recent list gives way */
+.side { overflow: hidden; }
+.side > * { flex-shrink: 0; }
+.side > .side-recent { flex: 0 1 auto; min-height: 0; overflow: hidden; align-content: start; }
+@media (max-height: 820px) {
+  .side { gap: 10px; padding-top: 16px; padding-bottom: 12px; }
+  .side-nav a { padding-top: 8px; padding-bottom: 8px; }
+  .side-foot { gap: 8px; }
+}
+@media (max-height: 680px) { .side-recent { display: none !important; } }

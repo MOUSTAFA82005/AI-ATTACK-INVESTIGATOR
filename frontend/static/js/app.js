@@ -444,7 +444,8 @@
     const tbody = el("tbody");
     const draw = () => {
       const q = search.value.trim().toLowerCase();
-      const list = sessions.filter((s) => (!flagged.checked || s.risk_score > 0) && (!q || haystack(s).includes(q)));
+      const list = sessions.filter((s) => (!flagged.checked || s.risk_score > 0) && (!q || haystack(s).includes(q)))
+        .sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0) || (b.requests || 0) - (a.requests || 0));
       if (!list.length) {
         tbody.replaceChildren(el("tr", {}, el("td", { colspan: 7, class: "muted", style: "padding:28px 0;text-align:center" },
           sessions.length ? (flagged.checked && !q ? "No visitor was flagged in this log. Untick “Flagged only” to see everyone." : "No visitor matches the filter.") : "No requests in this log.")));
