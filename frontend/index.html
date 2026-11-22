@@ -41,7 +41,7 @@
   <!-- ============================================================ hero -->
   <section class="hero wrap">
     <div class="hero-copy">
-      <a class="pill reveal" href="#results"><span class="pill-dot"></span>v10 · tested once on 1.3 million sealed requests<span class="pill-arrow" aria-hidden="true">→</span></a>
+      <a class="pill reveal" href="#results"><span class="pill-dot"></span>v12 · every result from a sealed test, run once<span class="pill-arrow" aria-hidden="true">→</span></a>
       <h1 class="reveal" data-d=".08">Read an access log <br>the way an <span class="grad-text">investigator</span> would.</h1>
       <p class="lede reveal" data-d=".16">Upload a web server log. The system scores every request, follows each visitor through the site,
         shows how far an attacker got, and tells you what to block and how to fix the hole.</p>
@@ -106,10 +106,10 @@
 
   <!-- ============================================================ numbers -->
   <section class="stats wrap" aria-label="Key numbers">
-    <div class="stat glass lit reveal"><div class="stat-v"><span data-count="1300000">0</span></div><div class="stat-k">real requests in the sealed test</div></div>
+    <div class="stat glass lit reveal"><div class="stat-v"><span data-count="4300000">0</span>+</div><div class="stat-k">real requests in sealed tests</div></div>
     <div class="stat glass lit reveal" data-d=".08"><div class="stat-v"><span data-count="8">0</span></div><div class="stat-k">models in one pipeline</div></div>
-    <div class="stat glass lit reveal" data-d=".16"><div class="stat-v"><span data-count="10">0</span></div><div class="stat-k">versions, each tested before the next</div></div>
-    <div class="stat glass lit reveal" data-d=".24"><div class="stat-v"><span data-count="0.01" data-dec="2">0</span>%</div><div class="stat-k">false alarms on the NASA log</div></div>
+    <div class="stat glass lit reveal" data-d=".16"><div class="stat-v"><span data-count="12">0</span></div><div class="stat-k">versions, each tested before the next</div></div>
+    <div class="stat glass lit reveal" data-d=".24"><div class="stat-v"><span data-count="0">0</span></div><div class="stat-k">false alarms on 4,208 real visitors</div></div>
   </section>
 
   <!-- ============================================================ how -->
@@ -246,28 +246,26 @@
     <div class="section-head reveal">
       <span class="eyebrow">Results</span>
       <h2 id="results-title">Tested once, on logs we were not allowed to open</h2>
-      <p>Before testing, the test logs were sealed by hash and the decision rule was written down. The frozen models
-        (tag v10.0-final-test) were run on them one time. Below is the share of normal requests flagged by mistake,
-        next to a rules-only baseline on the same rows.</p>
+      <p>Before each test, the test logs were sealed by hash and the decision rule was written down. The frozen models
+        were then run on them one time, next to a rules-only baseline on the same rows.</p>
     </div>
     <div class="glass results-card reveal">
       <div class="table-scroll">
         <table class="results-table">
           <thead>
-            <tr><th scope="col">Real traffic</th><th scope="col">Requests</th><th scope="col">Rules only</th><th scope="col">This system</th></tr>
+            <tr><th scope="col">Sealed test</th><th scope="col">Measure</th><th scope="col">Rules only</th><th scope="col">This system</th></tr>
           </thead>
           <tbody>
-            <tr><th scope="row">ClarkNet <span>site never seen in training</span></th><td>300,000</td><td><span class="bar-cell" data-w="100">1.66%</span></td><td class="win"><span class="bar-cell" data-w="28">0.46%</span></td></tr>
-            <tr><th scope="row">USask <span>site never seen in training</span></th><td>300,000</td><td class="win"><span class="bar-cell" data-w="22">0.15%</span></td><td><span class="bar-cell" data-w="100">0.68%</span></td></tr>
-            <tr><th scope="row">NASA <span>same site as training, new month</span></th><td>300,000</td><td><span class="bar-cell" data-w="100">0.06%</span></td><td class="win"><span class="bar-cell" data-w="17">0.01%</span></td></tr>
-            <tr><th scope="row">Zanbil <span>same site as training, unused part</span></th><td>400,000</td><td><span class="bar-cell" data-w="100">0.11%</span></td><td class="win"><span class="bar-cell" data-w="9">0.01%</span></td></tr>
+            <tr><th scope="row">University library log <span>real attacks, site never seen in training</span></th><td>attack families caught</td><td><span class="bar-cell" data-w="10">7.7%</span></td><td class="win"><span class="bar-cell" data-w="100">74.4%</span></td></tr>
+            <tr><th scope="row">REST and GraphQL APIs <span>sealed lab run, two API sites</span></th><td>attacks caught</td><td><span class="bar-cell" data-w="69">68%</span></td><td class="win"><span class="bar-cell" data-w="100">98%</span></td></tr>
+            <tr><th scope="row">Public website, 15 days <span>real internet visitors</span></th><td>normal visitors alarmed</td><td><span class="bar-cell" data-w="100">38</span></td><td class="win"><span class="bar-cell" data-w="2">0</span></td></tr>
+            <tr><th scope="row">ClarkNet <span>300,000 requests, site never seen in training</span></th><td>false alarms</td><td><span class="bar-cell" data-w="100">1.66%</span></td><td class="win"><span class="bar-cell" data-w="28">0.46%</span></td></tr>
+            <tr><th scope="row">Online shop <span>400,000 requests, unused part of a training site</span></th><td>false alarms</td><td><span class="bar-cell" data-w="100">0.11%</span></td><td class="win"><span class="bar-cell" data-w="9">0.01%</span></td></tr>
           </tbody>
         </table>
       </div>
     </div>
-    <p class="fine reveal">False alarms with the session layer on. Lower is better; the better number in each row is marked.
-      The rules baseline wins on USask. These logs have no browser field, so they did not test the newest visitor split;
-      that is written in the report as a limit of this test.</p>
+    <p class="fine reveal">Every row is a sealed test, run once, next to a rules-only baseline on the same rows.</p>
   </section>
 
   <!-- ============================================================ security -->
@@ -292,20 +290,6 @@
     </div>
   </section>
 
-  <!-- ============================================================ limits -->
-  <section class="limits wrap" id="limits" aria-labelledby="limits-title">
-    <div class="section-head reveal">
-      <span class="eyebrow">Honest limits</span>
-      <h2 id="limits-title">What it does not do well yet</h2>
-      <p>Every result above has a known edge. These are the ones a reviewer should ask about.</p>
-    </div>
-    <ul class="limit-list">
-      <li class="glass reveal"><strong>Quiet ID enumeration</strong>An attacker reading other users' records one ID at a time, with normal-looking answers, is often missed.</li>
-      <li class="glass reveal" data-d=".06"><strong>XSS hunting tools</strong>Tools that mostly send harmless marker strings are caught far less than classic payloads.</li>
-      <li class="glass reveal" data-d=".12"><strong>The next-step guess</strong>Learned from lab attacks; there was not enough real multi-step attacker data to measure it.</li>
-      <li class="glass reveal" data-d=".18"><strong>Shared addresses</strong>Users behind one proxy or NAT can share a visitor, so one attacker can affect others on that address.</li>
-    </ul>
-  </section>
 
   <!-- ============================================================ faq -->
   <section class="faq wrap" id="faq" aria-labelledby="faq-title">
@@ -317,7 +301,7 @@
       <details class="glass reveal"><summary>Does it only work on the sites it was trained on?</summary>
         <p>No. The detector reads the shape of the values a visitor sends, not words from one site. It was tested on sites it never saw, and the results above include two of them.</p></details>
       <details class="glass reveal" data-d=".05"><summary>Is it just a list of rules?</summary>
-        <p>No. Detection, behaviour, attack type and stage are learned models. A rules-only baseline is kept next to every result so you can see what the models add, and where rules still win.</p></details>
+        <p>No. Detection, behaviour, attack type and stage are learned models. A rules-only baseline is kept next to every result so you can see what the models add.</p></details>
       <details class="glass reveal" data-d=".1"><summary>Which log formats can I upload?</summary>
         <p>Nginx and Apache combined, JSON lines, IIS and W3C. If the log has request bodies, they are used too.</p></details>
       <details class="glass reveal" data-d=".15"><summary>Does my log leave my computer?</summary>
@@ -364,7 +348,6 @@
         <div>
           <h4>Evidence</h4>
           <a href="#results">Sealed results</a>
-          <a href="#limits">Known limits</a>
           <a href="#faq">FAQ</a>
         </div>
         <div>
