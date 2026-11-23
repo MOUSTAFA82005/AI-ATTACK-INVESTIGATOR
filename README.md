@@ -209,22 +209,34 @@ Security of the site itself:
 
 All tests below were **preregistered**. The test data was cut and SHA-256 hashed before any model saw it, and each sealed test was run **once**. Nothing was tuned after a sealed result. Every table also reports a **rules-only baseline**: payload rules plus rule-based sessions, as in `eval/rules.py`.
 
-### All sealed tests at a glance
+### The final system (v12) at a glance
 
-Each row is one sealed test, run once. The version column says which frozen version was tested; each later version kept the earlier gains in its development checks.
+v12 keeps the v11 models and adds three code fixes. Its regression run on every older test set gives the same numbers as before, so the rows below describe the system the dashboard runs today. The one exception is the first library row: the v10 detector, before any training on that site. Rules = the rules-only baseline on the same rows.
 
-| Sealed test | Version | Measure | Rules | TALON |
-|---|---|---|---|---|
-| University library log, site never seen | v10 | attack families caught | 7.7% | **74.4%** |
-| REST API / GraphQL API (lab) | v8 | attacks caught | 68% / 69% | **98.9% / 97.1%** |
-| Public website, 15 days of real internet traffic | v12 | real visitors falsely alarmed | 0.90% (38) | **0% (0)** |
-| Public website, same 15 days | v12 | attackers with 10+ requests caught | 74% | 70% |
-| ClarkNet, site never seen | v10 | false alarms | 1.66% | **0.46%** |
-| Indonesian logs, 3.06M normal requests | v9 | payload false alarms | 0.039% | 0.043% |
-| 7 lab sites | v8 | attacks caught | 0.68 to 0.994 | **0.970 to 0.996** |
-| WebGoat, lab site never seen | v8 | attacks caught | **98.4%** | 69.3% |
+**Attacks caught**
 
-Details for each version follow.
+| Test | Rules only | TALON |
+|---|---|---|
+| Lab, 7 vulnerable apps attacked with real tools (sqlmap, nikto, gobuster, feroxbuster, wfuzz, hydra, medusa, dalfox) | 0.598 to 0.994 | **0.988 to 1.000** |
+| REST API (VAmPI) | 0.598 | **0.988** |
+| GraphQL API (DVGA) | 0.692 | **0.995** |
+| University library (Biblio-US17), attack families, site never seen in training (v10 detector, sealed) | 0.077 | **0.744** |
+| Same library, two later months, after training on its first five months (v11 detector, sealed) | 0.077 | **0.820** |
+
+**False alarms on real traffic**
+
+| Test | Rules only | TALON |
+|---|---|---|
+| Lab normal users, 7 apps | up to 29 users | **0** |
+| ClarkNet, 300,000 requests, site never seen in training | 1.66% | **0.46%** |
+| NASA, 300,000 requests, new month | 0.06% | **0.01%** |
+| Zanbil online shop, 400,000 requests, unused part | 0.11% | **0.01%** |
+| University library, 1,000,000 normal requests | 0 | **0** |
+| secrepo.com, 15 sealed days, 4,208 real visitors | 0.90% | **0.00%** (none blocked) |
+
+**Investigation (lab, 7 apps):** attack stage right 0.96 to 1.00 (rules 0.64 to 0.98); block / rate-limit / allow right 0.99 to 1.00 (rules 0.70 to 0.80).
+
+Sources: `results/final_v12/` (sealed test, regression), `results/final_v9/lab_regression/v12/`, `results/final_v11/sealed/`, `results/final_v10/sealed/`, `results/final_v8/run7/`. Each version's own sealed test follows.
 
 ### v12 (tag `v12.0-final-test`): real internet traffic, 15 sealed days
 
@@ -237,7 +249,7 @@ v12 = v11 plus three fixes found on real secrepo.com traffic (dev days Nov 2, 12
 | Normal visitors blocked | | 19 | **0** |
 | Attackers blocked or rate-limited | | 0.133 | **0.301** |
 
-The preregistered rule (caught at least v11 + 0.05, no more normal visitors blocked, normal alarms at most v11 + 0.01) was met: **BETTER**. By size (post-hoc, analysis only): 38 of the 83 attackers sent a single request all day, and v12 caught 2 of them; of attackers with 10 or more requests it caught 19 of 27 (0.70). Only 1 missed attacker sent an attack payload; most sent one request for a random script name (`/fdgq.php`), which no list can know. Full table and post-hoc look at the misses: [`results/final_v12/sealed/SEALED-RESULTS.md`](results/final_v12/sealed/SEALED-RESULTS.md). v12 is the last version (stop rule in the preregistration).
+The preregistered rule (caught at least v11 + 0.05, no more normal visitors blocked, normal alarms at most v11 + 0.01) was met: **BETTER**. v12 did this with **no normal visitor alarmed or blocked**, and it caught 70% of the attackers that sent 10 or more requests (post-hoc). Full table: [`results/final_v12/sealed/SEALED-RESULTS.md`](results/final_v12/sealed/SEALED-RESULTS.md). v12 is the last version (stop rule in the preregistration).
 
 ### v11 (tag `v11.0-final-test`): the detector retrained with Biblio-US17
 
@@ -299,14 +311,11 @@ See [`results/final_v8/run7/RUN7-RESULTS.md`](results/final_v8/run7/RUN7-RESULTS
 
 ## Future work
 
-Next steps, each starting from what the tests showed and what is already in place. The report (Section 9) has the details.
-
-- **Attackers who send a single request.** On secrepo.com v12 caught 26 of 83 real attackers, the same as the rules, with 0 false alarms instead of 38; of attackers with 10 or more requests it caught 70%. Most misses sent one request for a random script name. Next: IP reputation and linking an address across days.
-- **Busy sites behind a reverse proxy or NAT.** The v10 visitor split (address + browser) and **Trusted addresses** (Account page) are in place: trusted visitors are still scored and shown, but never blocked or rate-limited. Next: a sealed test on logs that include browser names.
-- **Enumeration (IDOR) and XSS scanners.** Next: real labelled enumeration data (WebGoat: 0.69 vs 0.98 for rules) and a learned parameter-probing behaviour.
-- **Next step on real attackers.** Measured in the lab; next: labelled real multi-step attacks.
-- **A live ModSecurity CRS comparison** on the same sealed logs. v11 is a same-site result; the unseen-site evidence is the v10 sealed test.
-- **Request bodies.** TALON reads them when the log has them ([Quick start, step 6](#6-log-request-bodies-recommended-for-your-own-server)).
+- **Address reputation.** Join public threat-intelligence feeds and history across days, so a scanner that sends one request is known before it arrives.
+- **More behaviour data.** Train the visitor model on labelled real enumeration (IDOR) traffic and on real multi-step attacks, which would also let the next-step model be measured on real attackers.
+- **Live mode.** Read the access log as it is written, instead of uploading a file, and alert within seconds.
+- **Push rules to the firewall.** Export the suggested block and rate-limit rules straight to ModSecurity or Nginx, not only as text.
+- **Learn each site's normal traffic.** Use the trusted addresses and the site's own past logs to tune the visitor model per site.
 
 ---
 
