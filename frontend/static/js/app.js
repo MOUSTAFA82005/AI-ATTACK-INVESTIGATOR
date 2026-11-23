@@ -365,6 +365,12 @@
     }));
   }
 
+  // "Needs a look": the detector's score is between REVIEW_FROM and the mode's threshold, so the request is not
+  // called an attack, but the model was close. A review mark only; detection and verdicts are not changed.
+  const REVIEW_FROM = 0.5;
+  let reviewTo = 0.7;
+  const needsLook = (r) => !r.is_attack && r.attack_prob != null && r.attack_prob >= REVIEW_FROM && r.attack_prob < reviewTo;
+
   async function renderInvestigation(key, section) {
     if (!current || current.key !== String(key)) {
       if (key === "file") { location.hash = "#/new"; return; }
@@ -381,8 +387,10 @@
     setPage(data.filename || "Investigation", [exportBtn, saved ? deleteButton(data.id, () => { current = null; location.hash = "#/history"; }) : null].filter(Boolean));
 
     const sessions = data.sessions || [];
+    reviewTo = Number(data.threshold) || 0.7;
     const timeline = sessions.flatMap((s) => (s.timeline || []).map((t) => ({ ...t, ip: s.ip })));
     const attacks = timeline.filter((t) => t.is_attack).length;
+    const toReview = timeline.filter(needsLook).length;
     const payload = timeline.filter((t) => t.label === "attack").length;
     const blocked = sessions.filter((s) => s.action === "block" && s.risk_score > 0).length;
     const flaggedCount = data.sessions_flagged ?? sessions.filter((x) => x.risk_score > 0).length;
@@ -419,7 +427,7 @@
       el("section", { class: "kpis summary", "aria-label": "Summary" },
         kpi("Requests read", num(data.parsed ?? timeline.length), `${num(data.skipped || 0)} lines skipped, ${data.format || "unknown format"}`),
         kpi("Visitors flagged", `${num(flaggedCount)} / ${num(data.sessions_total ?? sessions.length)}`, levelText(sessions)),
-        kpi("Attack requests", num(attacks), `${num(payload)} by payload, ${num(attacks - payload)} by behaviour`, "threat"),
+        kpi("Attack requests", num(attacks), `${num(payload)} by payload, ${num(attacks - payload)} by behaviour${toReview ? ` · ${num(toReview)} need a look` : ""}`, "threat"),
         kpi("Suggested blocks", num(blocked), `${num(sessions.filter((s) => s.action === "rate_limit").length)} rate limits`),
         kpi("Mode", nice(data.mode || "sensitive"), `threshold ${data.threshold ?? "–"}${data.seconds ? `, ${data.seconds} s` : ""}`)),
       ...campaignPanels(data.campaigns),
@@ -486,7 +494,8 @@
         const tr = el("tr", { class: `s link${open ? " open" : ""}`, tabindex: 0, "aria-expanded": String(open) },
           el("td", {}, el("span", { class: `badge lv-${s.risk_level}` }, `${nice(s.risk_level)} ${s.risk_score}`)),
           el("td", { class: "ipcell" }, s.ip, s.trusted ? el("div", { class: "small", style: "color:var(--clean);margin-top:2px", title: "On your trusted list: shown, never blocked" }, "Trusted") : null,
-            s.campaign ? el("div", { class: "small", style: "color:var(--threat);margin-top:2px", title: "Part of a possible distributed campaign (see Summary)" }, `Campaign ${s.campaign}`) : null),
+            s.campaign ? el("div", { class: "small", style: "color:var(--threat);margin-top:2px", title: "Part of a possible distributed campaign (see Summary)" }, `Campaign ${s.campaign}`) : null,
+            (() => { const n = (s.timeline || []).filter(needsLook).length; return n ? el("div", { class: "small", style: "color:var(--warn);margin-top:2px", title: "Requests the detector was close to calling attacks" }, `${n} to review`) : null; })()),
           el("td", { class: "what" }, what.length ? what.map((w) => el("span", { class: "chip" }, nice(w))) : el("span", { class: "muted small" }, "Normal browsing")),
           el("td", { class: "num" }, num(s.requests)),
           el("td", { class: "hide-sm" }, s.stage ? nice(s.stage) : "–"),
@@ -587,8 +596,10 @@
     const t = s.timeline || [];
     const only = el("input", { type: "checkbox" });
     only.checked = showIp;
+    const look = el("input", { type: "checkbox" });
+    const nLook = t.filter(needsLook).length;
     const tbody = el("tbody");
-    const fill = () => tbody.replaceChildren(...t.filter((r) => !only.checked || r.is_attack).slice(0, 500).map((r) =>
+    const fill = () => tbody.replaceChildren(...t.filter((r) => look.checked ? needsLook(r) : (!only.checked || r.is_attack)).slice(0, 500).map((r) =>
       el("tr", { class: r.is_attack ? "attack" : "" },
         el("td", { class: "nowrap" }, fmtTime(r.timestamp).slice(11) || "–"),
         showIp ? el("td", { class: "ipcell" }, r.ip || "–") : null,
@@ -597,18 +608,23 @@
         el("td", { class: "num" }, r.attack_prob == null ? "–" : Number(r.attack_prob).toFixed(2)),
         el("td", {}, r.attack_type ? nice(r.attack_type) : r.is_attack ? "Attack" : "–",
           r.reasons?.length ? el("div", { class: "muted small" }, r.reasons.join("; ")) : null),
-        el("td", { class: "hide-sm" }, r.unusual ? el("span", { class: "chip", title: "Rare in this log. A review mark only; it never changes detection." }, "Unusual") : ""))));
-    only.addEventListener("change", fill);
+        el("td", { class: "hide-sm" },
+          needsLook(r) ? el("span", { class: "chip look", title: "The detector was close to calling this an attack. A review mark only; it never changes detection." }, "Needs a look") : null,
+          r.unusual ? el("span", { class: "chip", title: "Rare in this log. A review mark only; it never changes detection." }, "Unusual") : null))));
+    only.addEventListener("change", () => { if (only.checked) look.checked = false; fill(); });
+    look.addEventListener("change", () => { if (look.checked) only.checked = false; fill(); });
+    look.addEventListener("click", (e) => e.stopPropagation());
     only.addEventListener("click", (e) => e.stopPropagation());
     fill();
     return el("div", {},
-      el("label", { class: "check", style: "margin-bottom:8px" }, only, "Attack requests only"),
+      el("div", { class: "checks" }, el("label", { class: "check" }, only, "Attack requests only"),
+        nLook ? el("label", { class: "check" }, look, `Needs a look only (${num(nLook)})`) : null),
       el("div", { class: "table-wrap" }, el("table", { class: "t timeline" },
         el("thead", {}, el("tr", {}, ["Time", showIp ? "Visitor" : null, "Request", "Status", "Score", "Type and why", "Review"].filter(Boolean)
           .map((h) => el("th", { class: h === "Score" ? "num" : h === "Review" ? "hide-sm" : null }, h)))),
         tbody)),
       t.length > 500 ? el("p", { class: "note" }, `Showing the first 500 of ${num(t.length)} requests. The saved JSON has all of them.`) : null,
-      el("p", { class: "note" }, "Score is the detector's attack probability. A request is an attack by payload when the score reaches the mode's threshold, or by behaviour from the whole visit."));
+      el("p", { class: "note" }, `Score is the detector's attack probability. A request is an attack by payload when the score reaches the mode's threshold, or by behaviour from the whole visit. "Needs a look": score from ${REVIEW_FROM} up to the threshold.`));
   }
   function download(data) {
     const a = el("a", { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" })),

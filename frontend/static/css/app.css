@@ -449,3 +449,6 @@ dl.facts dd { margin: 0; }
 .campaign-ips { margin-top: 12px; }
 .campaign-ips summary { cursor: pointer; color: var(--accent); font-size: 14px; }
 .campaign-ips pre { max-height: 220px; overflow: auto; margin-top: 8px; }
+/* "Needs a look" review mark (score just under the threshold) */
+.chip.look { color: var(--warn); background: var(--warn-soft); border-color: rgba(255, 181, 71, .35); margin-right: 4px; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 8px; }

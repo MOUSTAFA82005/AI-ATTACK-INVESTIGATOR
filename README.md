@@ -157,6 +157,7 @@ The site has these pages:
 - **Overview:** totals, trend, top attackers.
 - **New investigation:** upload a log and choose the sensitive or quiet mode.
 - **Investigations:** every saved result, with Summary, Visitors, Requests and Fixes tabs. The Summary also shows any **distributed campaign**: many addresses that send only probe requests with the same browser name (a botnet spread over many addresses), with one-click block rules for all of them (`backend/app/campaigns.py`).
+  Requests the detector was close to calling attacks (score from 0.5 up to the threshold) get a **Needs a look** mark and their own filter; it is a review mark only and never changes a verdict.
 - **Attackers:** attackers seen across all logs.
 - **Recent.**
 - **Notifications.**
