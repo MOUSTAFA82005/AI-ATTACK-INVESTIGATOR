@@ -457,7 +457,7 @@
         const what = [...new Set([...(s.attack_types || []), ...(s.behaviours || [])])];
         const tr = el("tr", { class: `s link${open ? " open" : ""}`, tabindex: 0, "aria-expanded": String(open) },
           el("td", {}, el("span", { class: `badge lv-${s.risk_level}` }, `${nice(s.risk_level)} ${s.risk_score}`)),
-          el("td", { class: "ipcell" }, s.ip),
+          el("td", { class: "ipcell" }, s.ip, s.trusted ? el("div", { class: "small", style: "color:var(--clean);margin-top:2px", title: "On your trusted list: shown, never blocked" }, "Trusted") : null),
           el("td", { class: "what" }, what.length ? what.map((w) => el("span", { class: "chip" }, nice(w))) : el("span", { class: "muted small" }, "Normal browsing")),
           el("td", { class: "num" }, num(s.requests)),
           el("td", { class: "hide-sm" }, s.stage ? nice(s.stage) : "–"),
@@ -846,7 +846,8 @@
           el("div", { class: "field" }, el("label", { for: "a-new2" }, "Repeat it"), nw2)),
         passwordMeter(nw, () => [info.username, info.email || ""])),
       el("div", { class: "field" }, el("div", { class: "code-row" }, el("label", { for: "a-code" }, "Code from your e-mail"), send), code),
-      btn, msg);
+      btn, msg,
+      el("p", { class: "note" }, "Changing it logs out every session of this account, and we e-mail you a notice."));
     otp(code);
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -862,6 +863,7 @@
       finally { code.otpReset(); }
     });
     put(el("div", { class: "account" },
+      el("div", { class: "account-col" },
       el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Your account")),
         el("dl", { class: "facts" },
           el("dt", {}, "User name"), el("dd", {}, info.username),
@@ -870,7 +872,59 @@
           el("dt", {}, "Last login"), el("dd", {}, fmtDate(info.last_login)),
           el("dt", {}, "Two-step login"), el("dd", {}, "On, codes by e-mail")),
         el("p", { class: "note", style: "margin-top:18px" }, "Every login needs your password and a code sent to this e-mail.")),
-      el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Change password")), form)));
+      trustedPanel()),
+      el("section", { class: "panel password-panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Change password")), form)));
+  }
+
+  // Addresses this account trusts (office NAT, own proxy, monitoring). Their visitors are still scored and
+  // shown in every investigation, but never blocked or rate-limited (backend/app/trusted.py).
+  function trustedPanel() {
+    const addr = el("input", { class: "input", id: "t-addr", placeholder: "e.g. 203.0.113.7", maxlength: 64, autocomplete: "off", required: true });
+    const note = el("input", { class: "input", id: "t-note", placeholder: "Optional", maxlength: 80, autocomplete: "off" });
+    const msg = el("div", { class: "notice", role: "alert", hidden: true });
+    const btn = el("button", { class: "btn btn-primary", type: "submit" }, "Add address");
+    const list = el("tbody");
+    const empty = el("p", { class: "muted small", style: "margin:12px 0 0" }, "No trusted addresses yet.");
+    const table = el("div", { class: "table-wrap", style: "margin-top:14px", hidden: true }, el("table", { class: "t" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Address"), el("th", {}, "Note"), el("th", {}, ""))), list));
+    const say = (cls, text) => { msg.className = `notice ${cls}`; msg.textContent = text; msg.hidden = false; };
+    async function load() {
+      let items = [];
+      try { items = await call("/api/trusted"); } catch (err) { say("error", err.message); }
+      table.hidden = !items.length;
+      empty.hidden = !!items.length;
+      list.replaceChildren(...(items.length ? items.map((t) => {
+        const del = el("button", { class: "btn btn-ghost btn-small", type: "button" }, "Remove");
+        del.addEventListener("click", async () => {
+          del.disabled = true;
+          try { await call(`/api/trusted/${t.id}`, { method: "DELETE" }); msg.hidden = true; load(); }
+          catch (err) { say("error", err.message); del.disabled = false; }
+        });
+        return el("tr", {}, el("td", { class: "ipcell" }, t.address), el("td", {}, t.note || el("span", { class: "muted small" }, "–")), el("td", {}, del));
+      }) : []));
+    }
+    const form = el("form", { class: "form trusted-form", novalidate: true },
+      el("div", { class: "trusted-row" },
+        el("div", { class: "field" }, el("label", { for: "t-addr" }, "IP address or network"), addr),
+        el("div", { class: "field" }, el("label", { for: "t-note" }, "Note"), note),
+        btn),
+      msg);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      msg.hidden = true;
+      btn.disabled = true;
+      try {
+        const r = await call("/api/trusted", { method: "POST", json: { address: addr.value, note: note.value } });
+        addr.value = note.value = "";
+        say("ok", `${r.address} added. It applies to new investigations.`);
+        load();
+      } catch (err) { say("error", err.message); }
+      finally { btn.disabled = false; }
+    });
+    load();
+    return el("section", { class: "panel trusted-panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Trusted addresses")),
+      el("p", { class: "note", style: "margin:0 0 14px" }, "Your own addresses, such as an office behind one IP or your reverse proxy: one IP, or a whole network like 203.0.113.0/24. Their visitors are still scored and shown, but never blocked or rate-limited."),
+      form, empty, table);
   }
 
   // ---------------------------------------------------------------- start

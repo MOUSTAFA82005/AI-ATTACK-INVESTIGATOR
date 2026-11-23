@@ -431,3 +431,14 @@ dl.facts dd { margin: 0; }
   .side-foot { gap: 8px; }
 }
 @media (max-height: 680px) { .side-recent { display: none !important; } }
+/* Account: trusted addresses under 'Your account' (left column); address, note and button on one line */
+.account { align-items: stretch; }
+.account-col { display: grid; gap: 20px; grid-template-rows: auto 1fr; min-width: 0; }
+.trusted-form { max-width: 860px; }
+.trusted-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.trusted-row .btn { white-space: nowrap; min-height: 46px; }
+@media (max-width: 700px) { .trusted-row { grid-template-columns: minmax(0, 1fr); } }
+/* Account: the password form uses the whole width of its card */
+.password-panel { display: flex; flex-direction: column; }
+.password-panel > .form { max-width: none; }
+.password-panel .otp-box { aspect-ratio: auto; height: 76px; }

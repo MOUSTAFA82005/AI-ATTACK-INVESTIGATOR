@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS investigations (
     result     BLOB NOT NULL               -- zlib(JSON) of the full masked result
 );
 CREATE INDEX IF NOT EXISTS inv_user ON investigations(user_id, created_at);
+CREATE TABLE IF NOT EXISTS trusted_addresses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    address    TEXT NOT NULL,              -- one IP or a network (CIDR), stored in normal form
+    note       TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    UNIQUE (user_id, address)
+);
 """
 # Older databases had no email column (the user name held the address); add it on open.
 EMAIL_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE)"
@@ -156,3 +164,26 @@ class Store:
     def delete_investigation(self, user_id, inv_id):
         with self._lock, self._db:
             return self._db.execute("DELETE FROM investigations WHERE id = ? AND user_id = ?", (inv_id, user_id)).rowcount
+
+    # ------------------------------------------------------------------ trusted addresses
+    # Addresses an account trusts (an office NAT, its own proxy, a monitoring service). Visitors from them are
+    # still scored and shown, but never blocked or rate-limited for that account (see backend/app/trusted.py).
+    def trusted(self, user_id):
+        rows = self._q("SELECT id, address, note, created_at FROM trusted_addresses WHERE user_id = ? ORDER BY created_at, id",
+                       (user_id,))
+        return [dict(r) for r in rows]
+
+    def count_trusted(self, user_id):
+        return self._q("SELECT COUNT(*) AS n FROM trusted_addresses WHERE user_id = ?", (user_id,), one=True)["n"]
+
+    def add_trusted(self, user_id, address, note=""):
+        """Returns the new id, or None when this account already trusts that address."""
+        try:
+            return self._exec("INSERT INTO trusted_addresses (user_id, address, note, created_at) VALUES (?, ?, ?, ?)",
+                              (user_id, address, note, time.time()))
+        except sqlite3.IntegrityError:
+            return None
+
+    def delete_trusted(self, user_id, item_id):
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM trusted_addresses WHERE id = ? AND user_id = ?", (item_id, user_id)).rowcount

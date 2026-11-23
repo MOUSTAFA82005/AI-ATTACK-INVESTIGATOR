@@ -40,7 +40,7 @@ from ml.explain import reasons  # noqa: E402
 from ml.probes import PROBE_REASON, probe_rows  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 from backend.app.auth import bootstrap_from_env, get_auth, is_https, require_user  # noqa: E402
-from backend.app import accounts, history  # noqa: E402
+from backend.app import accounts, history, trusted  # noqa: E402
 
 # The API description pages (/docs, /redoc, /openapi.json) are off: they map every endpoint
 # for a stranger. Set AAI_API_DOCS=1 on your own laptop to see them.
@@ -91,6 +91,7 @@ async def not_found_page(request: Request, exc: StarletteHTTPException):
     return await http_exception_handler(request, exc)
 app.include_router(accounts.router)
 app.include_router(history.router)
+app.include_router(trusted.router)
 
 SECURITY_HEADERS = {
     # Only this server's own files: no inline scripts, no other sites, no framing.
@@ -319,6 +320,8 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
     started = time.monotonic()
     raw = await _read_upload(file)
     result = await _run(user, _investigate, raw, threshold, _filename(file.filename), mode)
+    # After the analysis, so detection (and the sealed-test path, _investigate) is unchanged.
+    trusted.apply_trusted(result, trusted.networks(store.trusted(user["id"])))
     return _finish(result, user, save, started)
 
 
