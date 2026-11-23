@@ -182,6 +182,19 @@ Security of the site itself:
 
 All tests below were **preregistered**. The test data was cut and SHA-256 hashed before any model saw it, and each sealed test was run **once**. Nothing was tuned after a sealed result. Every table also reports a **rules-only baseline**: payload rules plus rule-based sessions, as in `eval/rules.py`.
 
+### v12 (tag `v12.0-final-test`): real internet traffic, 15 sealed days
+
+v12 = v11 plus three fixes found on real secrepo.com traffic (dev days Nov 2, 12, 17 2026): a broken link in quotes (`%22http://...%22`) is scored again without the link, an IP that changes its browser name on almost every request is one visitor, and known exploit endpoints and HEAD backup-folder guesses count as probes (also when answered 429). No model was retrained. The sealed test is 15 other days of November 2026 of the same site, hashed before anyone opened them; visitors were labelled by hand from the raw lines before any system ran.
+
+| secrepo.com, 15 sealed days | Rules | v11 | v12 |
+|---|---|---|---|
+| Attacker visitors caught (83) | 0.313 | 0.145 | **0.313** |
+| Normal visitors with any alarm (4,208) | 0.0090 (38) | 0.0045 (19) | **0 (0)** |
+| Normal visitors blocked | | 19 | **0** |
+| Attackers blocked or rate-limited | | 0.133 | **0.301** |
+
+The preregistered rule (caught at least v11 + 0.05, no more normal visitors blocked, normal alarms at most v11 + 0.01) was met: **BETTER**. Most of the 57 missed attackers sent one request for a random script name (`/fdgq.php`), which no list can know. Full table and post-hoc look at the misses: [`results/final_v12/sealed/SEALED-RESULTS.md`](results/final_v12/sealed/SEALED-RESULTS.md). v12 is the last version (stop rule in the preregistration).
+
 ### v11 (tag `v11.0-final-test`): the detector retrained with Biblio-US17
 
 v11 = v10 plus training on [Biblio-US17](#reproducibility), the access log of the University of Seville library (Jan to May 2017). This data has only method, URI, status and size: no client address, browser or body. So v11 changes the **payload detector only**; every other model is the v10 one. The sealed test is June 1 to July 17 2017 of the same server, cut and hashed before anyone opened a file.
