@@ -70,7 +70,7 @@ pip install -r requirements.txt
 
 ### 1. Put the models in place
 
-Model files are not in git. Put these in `models/`. Since v11 the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`); the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
+Model files are not in git. Put these in `models/`. v12 retrained nothing: the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`), and the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
 
 - `detector.joblib`
 - `context.joblib`
@@ -79,7 +79,7 @@ Model files are not in git. Put these in `models/`. Since v11 the app's `detecto
 - `block_rules.joblib`
 - `next_step.json`
 
-Ask Safi for them, or train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v11/model_hashes.txt` (detector) and `results/final_v10/model_hashes.txt` (the rest). Without the models the site still starts, but an upload answers 503.
+Ask Safi for them, or train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v12/model_hashes.txt`, the exact files used by the v12 sealed test. Without the models the site still starts, but an upload answers 503.
 
 ### 2. E-mail settings (optional on your own laptop)
 
@@ -265,6 +265,7 @@ We report these plainly. They are also listed in the report.
 - **Known-vulnerable-path probes** (honeypot style) are a signature problem, not a learning problem. `ml/probes.py` adds a list for them, but it was written after the v11 sealed test and has no sealed result.
 - **Biblio-US17 LVL2/3 attacks** (context-dependent requests and percent-encoding tricks) are mostly missed: about 0.08 recall for v10 and v11. They were never used in training.
 - **v11 is a same-site result.** Its sealed test is later months of the training site. The evidence for unseen sites is still the v10 sealed test.
+- **v12 catches about a third of real attackers on secrepo.com (26 of 83), the same as rules.** Its gain is zero false alarms. One-request probes for random script names cannot be caught from one line.
 - **Logs without request bodies hide attacks sent in POST bodies.**
 - **Sessions live in server memory.** Restarting the server logs everyone out.
 
@@ -273,7 +274,7 @@ We report these plainly. They are also listed in the report.
 ## Reproducibility
 
 - **Frozen versions are git tags.**
-  - `v11.0-final-test` is the latest (v10 + Biblio-US17 detector) and the app's current version: it met the preregistered adoption rule. `v10.0-final-test`, `v9.0-final-test` and `v8.0-final-test` are earlier ones.
+  - `v12.0-final-test` is the last version and the app's current one: v11 models plus three code fixes, no retraining. `v11.0-final-test` (v10 + Biblio-US17 detector), `v10.0-final-test`, `v9.0-final-test` and `v8.0-final-test` are earlier ones.
   - Each `results/final_vN/` folder has a `PREREGISTRATION.md` with its amendments, `hashes.txt` (the sealed data), `model_hashes.txt` (the exact models), the sealed results and the development checks.
   - Training and evaluation logs of v10 are in `results/final_v10/logs/`.
 - **Sealed data is never opened** before its single run (`data/sealed/`, not committed).
@@ -305,7 +306,7 @@ We report these plainly. They are also listed in the report.
 
   The context model of v10 is the v9 one (`python -m ml.train_context`). The exact days and amendments are in `results/final_v10/PREREGISTRATION.md`.
 - **Training (v11 detector):** `python -m eval.v11_convert` (Biblio-US17 development months), then `python -m ml.train_detector --v11 train,holdout --out models/detector_v11.joblib`. Details in `results/final_v11/PREREGISTRATION.md`.
-- **The sealed tests:** v10: `python -m eval.v10_sealed_test convert`, then `run --tag v10`, then `report`. v11: `python -m eval.v11_sealed_test convert`, then `run`. Each was run once. `convert` checks the hashes first. The steps are in the scripts' docstrings.
+- **The sealed tests:** v10: `python -m eval.v10_sealed_test convert`, then `run --tag v10`, then `report`. v11: `python -m eval.v11_sealed_test convert`, then `run`. v12: `python -m eval.v12_label` (labels first), then `python -m eval.v12_sealed_test run --tag v12`, then `report`. Each was run once. `convert` checks the hashes first. The steps are in the scripts' docstrings.
 
 ---
 
@@ -315,8 +316,8 @@ We report these plainly. They are also listed in the report.
 backend/app/   FastAPI app: log parser, /investigate and /analyze, accounts, e-mail codes, saved results
 frontend/      Landing page, login, dashboard (plain JS + CSS, no build step, no CDN)
 ml/            Features, models and their training scripts
-eval/          Evaluation scripts: rules baseline, preregistered tests, development checks
-results/       Preregistrations, hashes and results of every frozen version (final_v8 to final_v11)
+eval/          Evaluation scripts: rules baseline, preregistered tests, development checks (index in eval/README.md)
+results/       Preregistrations, hashes and results of every frozen version (final_v8 to final_v12)
 lab/           Docker lab (vulnerable apps behind Nginx) and the traffic generator
 notebooks/     Earlier experiments (CSIC baseline, model comparison, SHAP, ...)
 tests/         pytest suite
