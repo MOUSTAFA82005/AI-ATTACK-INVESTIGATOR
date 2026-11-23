@@ -108,22 +108,7 @@ v12 is the last version: its preregistration says "No v13".
 
 ---
 
-## 4. Hard questions and short answers
-
-| Question | Answer |
-|---|---|
-| Why only 31% of real attackers? | See the table above: 70% of attackers with 10+ requests; the misses are one-line probes without payload; rules got the same 31% with 38 false alarms. |
-| Is 99.87% on Biblio-US17 an unseen-site result? | No. v11 was trained on Jan-May of the same site. The unseen-site number is v10's **74.4%**. |
-| Do rules ever beat the model? | Yes, on USask false alarms (0.15% vs 0.68%, many users behind shared IPs) and on WebGoat enumeration (0.98 vs 0.69). Both are next steps in the README (Future work). |
-| Can it run on a site it never saw? | Yes: ClarkNet, Biblio-US17 (v10) and WebGoat were never in training. |
-| Is the next-step model accurate? | Lab only; no public data has labelled multi-step real attacks, so it cannot be measured on real traffic. |
-| Did you tune on the test data? | No. Each sealed set was hashed before work started, opened once after the freeze, and never reused. |
-
-Next steps: `README.md` → Future work.
-
----
-
-## 5. Team
+## 4. Team
 
 | Member | Role |
 |---|---|
@@ -135,24 +120,14 @@ Instructor: Dr. Sara El-Metwally · TA: Eng. Asmaa Nagib
 
 ---
 
-## 6. Run it and demo it
+## 5. Run it
+
+Follow the [Quick start](../README.md#quick-start-windows) in the README: clone, install, download the models from the `v12.0-final-test` release, then start the server:
 
 ```powershell
-cd "C:\Users\ms182\Downloads\AI PROJECT\AI-ATTACK-INVESTIGATOR"
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --port 8000
+python -m uvicorn backend.app.main:app --port 8000
 ```
 
-Open http://127.0.0.1:8000, log in, **New investigation**, upload a log.
-Models (`models/*.joblib`) are not in git; copy the `models` folder from the laptop to any new machine first.
+Open http://127.0.0.1:8000, log in, choose **New investigation** and upload an access log.
 
-Suggested demo: secrepo `access.log.2026-11-18` (640 requests): one WordPress-install finder caught and rate-limited,
-zero false alarms on 397 normal visitors. Then a lab log with SQLi and XSS to show stages, fixes and WAF rules.
-
-Tests: `python -m pytest -q` → 298 passed.
-
----
-
-## 7. What is left
-
-- Final report and slides (+ two rehearsals), backup demo video.
-- Run the Quick start from zero on a second laptop (with the `models` folder copied over).
+Tests: `python -m pytest -q`.

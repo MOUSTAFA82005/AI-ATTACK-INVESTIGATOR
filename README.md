@@ -13,7 +13,7 @@ You upload a web server access log. TALON then:
 
 It is built to work on **any** access log, not just the sites it was trained on. That generalization is tested on sites the models have never seen.
 
-**The whole project on one page** (what it does, how it was tested, every result, hard questions, team): [`docs/PROJECT-SUMMARY.md`](docs/PROJECT-SUMMARY.md).
+**The whole project on one page** (what it does, how it was tested, every result, team): [`docs/PROJECT-SUMMARY.md`](docs/PROJECT-SUMMARY.md).
 
 > **Ethics.** Attack traffic was only ever sent to our own lab: vulnerable apps in Docker, reachable on 127.0.0.1 only. Never point any script in this repository at a real or third-party site. Lab traffic uses fake accounts and cards only, and raw logs are never committed.
 
