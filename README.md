@@ -62,17 +62,27 @@ Secrets in the results are replaced with `***` after the models have run, so det
 
 You need Python 3.11. Docker Desktop with WSL2 is needed only for the lab.
 
+Clone into a **short path** such as `C:\projects`. Windows refuses very long file paths unless "long paths" is turned on, and `pip` then fails while unpacking some packages.
+
 ```powershell
+cd C:\projects
 git clone https://github.com/MOUSTAFA82005/AI-ATTACK-INVESTIGATOR.git
 cd AI-ATTACK-INVESTIGATOR
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r deploy/requirements.txt    # the exact versions the models were trained and tested with
+pip install -r requirements.txt           # adds the notebook, plotting and test tools; keeps the pinned versions
 ```
 
 ### 1. Put the models in place
 
-Model files are not in git. Put these in `models/`. v12 retrained nothing: the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`), and the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
+Model files are not in git. Download [`talon-models-v12.zip`](https://github.com/MOUSTAFA82005/AI-ATTACK-INVESTIGATOR/releases/download/v12.0-final-test/talon-models-v12.zip) from the [`v12.0-final-test` release](https://github.com/MOUSTAFA82005/AI-ATTACK-INVESTIGATOR/releases/tag/v12.0-final-test) and unpack it in the project folder; the files land in `models/`:
+
+```powershell
+Expand-Archive talon-models-v12.zip -DestinationPath . -Force
+```
+
+The zip holds these files, plus `model_hashes.txt` to check them. v12 retrained nothing: the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`), and the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
 
 - `detector.joblib`
 - `context.joblib`
@@ -81,7 +91,7 @@ Model files are not in git. Put these in `models/`. v12 retrained nothing: the a
 - `block_rules.joblib`
 - `next_step.json`
 
-Ask Safi for them, or train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v12/model_hashes.txt`, the exact files used by the v12 sealed test. Without the models the site still starts, but an upload answers 503.
+You can also train them yourself (see [Reproducibility](#reproducibility)). Their SHA-256 hashes are in `results/final_v12/model_hashes.txt`, the exact files used by the v12 sealed test. Without the models the site still starts, but an upload answers 503.
 
 ### 2. E-mail settings (optional on your own laptop)
 
