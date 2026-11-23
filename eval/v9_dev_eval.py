@@ -2,7 +2,7 @@
 v9 dev check: payload detectors compared PER REQUEST on DEV data held out from their training.
 Nothing here reads data/sealed/.
 
-    python -m eval.v9_dev_eval models/detector.joblib models/detector_v9_holdout.joblib
+    python -m eval.v9_dev_eval models/detector.joblib models/archive/v9/detector_v9_holdout.joblib
     python -m eval.v9_dev_eval --srbh-holdout=2020-07-19,2020-07-23,2020-07-24 models/detector.joblib models/x.joblib
 
 - SR-BH held-out DEV days (default 20-24 Jul 2020): recall vs CRS labels, false alarms on CRS-normal.

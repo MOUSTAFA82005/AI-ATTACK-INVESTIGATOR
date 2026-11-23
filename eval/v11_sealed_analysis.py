@@ -24,7 +24,7 @@ from eval.v11_dev_eval import family, flags
 
 CONV = Path(os.environ.get("V11_ANALYSIS_CONV", "data/processed/v11/sealed"))
 OUT = Path(os.environ.get("V11_ANALYSIS_OUT", "results/final_v11/sealed"))
-MODELS = {"v10": "models/v10_backup/detector.joblib", "v11": "models/detector_v11.joblib"}
+MODELS = {"v10": "models/archive/v10/detector.joblib", "v11": "models/archive/v11/detector.joblib"}
 
 _SQL = re.compile(r"union|select|insert|sleep\(|benchmark|or\s*1\s*=\s*1|'\s*or|--|/\*|information_schema|waitfor", re.I)
 _SCRIPT = re.compile(r"<\s*/?\s*(script|img|svg|iframe)|javascript:|onerror|onload|alert\(", re.I)

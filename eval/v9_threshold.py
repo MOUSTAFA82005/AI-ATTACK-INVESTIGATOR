@@ -10,7 +10,7 @@ For each threshold, per request (detector alone, then the served-files rule, as 
 The payload rules are one fixed row. Nothing here reads data/sealed/ (run7 lab files are
 data/raw + data/labels).
 
-    python -m eval.v9_threshold models/detector_v9_holdout2.joblib
+    python -m eval.v9_threshold models/archive/v9/detector_v9_holdout2.joblib
 """
 import re
 import sys
@@ -61,7 +61,7 @@ def num(d):
 
 
 def main(argv):
-    model = joblib.load(argv[0] if argv else "models/detector_v9_holdout2.joblib")
+    model = joblib.load(argv[0] if argv else "models/archive/v9/detector_v9_holdout2.joblib")
     sets = {}
     s = num(pd.read_csv(V9 / "srbh_dev.csv", dtype=str, keep_default_na=False))
     sets["srbh"] = s[s["timestamp"].str[:10].isin(SRBH_HOLDOUT)].reset_index(drop=True)
@@ -120,7 +120,7 @@ def main(argv):
     OUT.mkdir(parents=True, exist_ok=True)
     T.to_csv(OUT / "threshold_curve.csv", index=False)
     (OUT / "THRESHOLD.md").write_text("\n".join([
-        f"# Detector threshold on DEV data: `{argv[0] if argv else 'models/detector_v9_holdout2.joblib'}`", "",
+        f"# Detector threshold on DEV data: `{argv[0] if argv else 'models/archive/v9/detector_v9_holdout2.joblib'}`", "",
         f"SR-BH held-out days {', '.join(SRBH_HOLDOUT)}; zanbil lines 3,000,001-3,200,000; Glastopf from 2015-01-01; lab run7.",
         "Per request, detector + served-files rule, no sessions. FA probe-like = CRS-normal requests for backup/archive/config "
         "file names or with unusual methods: CRS may have missed these, so part of that column may be real attacks.", "",

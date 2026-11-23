@@ -82,7 +82,7 @@ Model files are not in git. Download [`talon-models-v12.zip`](https://github.com
 Expand-Archive talon-models-v12.zip -DestinationPath . -Force
 ```
 
-The zip holds these files, plus `model_hashes.txt` to check them. v12 retrained nothing: the app's `detector.joblib` is the v11 detector (a copy of `detector_v11.joblib`), and the other files are the frozen v10 set. The v10 detector is kept in `models/v10_backup/`.
+The zip holds these files, plus `model_hashes.txt` to check them. v12 retrained nothing: the app's `detector.joblib` is the v11 detector, and the other files are the frozen v10 set.
 
 - `detector.joblib`
 - `context.joblib`
@@ -344,7 +344,7 @@ Next steps, each starting from what the tests showed and what is already in plac
   ```
 
   The context model of v10 is the v9 one (`python -m ml.train_context`). The exact days and amendments are in `results/final_v10/PREREGISTRATION.md`.
-- **Training (v11 detector):** `python -m eval.v11_convert` (Biblio-US17 development months), then `python -m ml.train_detector --v11 train,holdout --out models/detector_v11.joblib`. Details in `results/final_v11/PREREGISTRATION.md`.
+- **Training (v11 detector):** `python -m eval.v11_convert` (Biblio-US17 development months), then `python -m ml.train_detector --v11 train,holdout --out models/archive/v11/detector.joblib`. Details in `results/final_v11/PREREGISTRATION.md`.
 - **The sealed tests:** v10: `python -m eval.v10_sealed_test convert`, then `run --tag v10`, then `report`. v11: `python -m eval.v11_sealed_test convert`, then `run`. v12: `python -m eval.v12_label` (labels first), then `python -m eval.v12_sealed_test run --tag v12`, then `report`. Each was run once. `convert` checks the hashes first. The steps are in the scripts' docstrings.
 
 ---

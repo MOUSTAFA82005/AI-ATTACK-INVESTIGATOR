@@ -5,7 +5,7 @@ agreement with CRS, not truth (PREREGISTRATION v9, circularity note). Only attac
 family that maps to our types (sqli, traversal, cmdi) and that carry a payload; distinct requests.
 
     python -m eval.v9_type_eval                                          # models/attack_type.joblib
-    python -m eval.v9_type_eval --type models/attack_type_v9.joblib --name v9
+    python -m eval.v9_type_eval --type models/archive/v9/attack_type_v9.joblib --name v9
 """
 import argparse
 from pathlib import Path

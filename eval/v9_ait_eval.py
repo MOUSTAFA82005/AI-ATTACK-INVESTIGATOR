@@ -9,7 +9,7 @@ Hydra's plain page loads and the ::1 OPTIONS lines the labels also mark are repo
 ("bruteforce page loads"): no log-only method can tell them from a visitor's.
 
     python -m eval.v9_ait_eval --name v8                       # current models
-    python -m eval.v9_ait_eval --context models/context_v9.joblib --name v9ctx
+    python -m eval.v9_ait_eval --context models/archive/v9/context_v9.joblib --name v9ctx
 """
 import argparse
 from pathlib import Path

@@ -2,7 +2,7 @@
 v10 DEV check of the payload detector: v9 model vs a v10 candidate, on data the v9 sealed test used (now dev).
 Aggregates only.
 
-    python -m eval.v10_payload_dev models/detector.joblib models/detector_v10.joblib  -> results/final_v10/dev/PAYLOAD_DEV.md
+    python -m eval.v10_payload_dev models/detector.joblib models/archive/v10/detector.joblib  -> results/final_v10/dev/PAYLOAD_DEV.md
 """
 import sys
 from pathlib import Path

@@ -18,7 +18,7 @@ Public data only (never our generator, so the lab runs stay a fair test):
 Missing files are skipped. Each class gets the same weight.
 
     python -m ml.train_attack_type --srbh-days 2020-07-17,2020-07-18,2020-07-20,2020-07-21,2020-07-22 \
-        --out models/attack_type_v9.joblib
+        --out models/archive/v9/attack_type_v9.joblib
 """
 import argparse
 from pathlib import Path

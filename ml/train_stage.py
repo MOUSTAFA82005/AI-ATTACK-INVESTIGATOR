@@ -13,8 +13,8 @@ web-shell upload and use = exploitation; eval/v9_convert_ait.py), at most AIT_MA
 requests per stage and host; --model / --context / --type pick the models the pipeline runs
 with (the stage model learns from what they say), --out where to save:
 
-    python -m ml.train_stage --ait-hosts cup,insect --model models/detector_v9_holdout2.joblib \
-        --context models/context_v9.joblib --type models/attack_type_v9.joblib --out models/stage_v9.joblib
+    python -m ml.train_stage --ait-hosts cup,insect --model models/archive/v9/detector_v9_holdout2.joblib \
+        --context models/archive/v9/context_v9.joblib --type models/archive/v9/attack_type_v9.joblib --out models/archive/v9/stage_v9.joblib
 
 Runs are data/raw/<site>_generated_<tag>.log + data/labels/requests[_<site>]_<tag>.csv
 for the five lab sites (Juice Shop's label files have no site prefix); missing runs are skipped.

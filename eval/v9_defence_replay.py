@@ -13,8 +13,8 @@ with the risk-level rules (baseline). Reported:
     with a normal user (NAT), so blocking that IP also blocks that user; counted apart.
 Checkpoints are coarse: the real block point is at or before the one reported.
 
-    python -m eval.v9_defence_replay --model models/detector_v9_holdout2.joblib \
-        --context models/context_v9.joblib --type models/attack_type_v9.joblib --stage models/stage_v9.joblib --name v9
+    python -m eval.v9_defence_replay --model models/archive/v9/detector_v9_holdout2.joblib \
+        --context models/archive/v9/context_v9.joblib --type models/archive/v9/attack_type_v9.joblib --stage models/archive/v9/stage_v9.joblib --name v9
 """
 import argparse
 from pathlib import Path

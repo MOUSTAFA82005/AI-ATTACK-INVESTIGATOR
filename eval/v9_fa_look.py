@@ -2,7 +2,7 @@
 What are the v9 false alarms on SR-BH held-out DEV days? (CRS says normal, the model says attack.)
 Prints only summaries: page shapes, which attack signals fired, methods. DEV data only.
 
-    python -m eval.v9_fa_look models/detector_v9_holdout2.joblib
+    python -m eval.v9_fa_look models/archive/v9/detector_v9_holdout2.joblib
 """
 import re
 import sys
@@ -51,4 +51,4 @@ def main(model_path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "models/detector_v9_holdout2.joblib")
+    main(sys.argv[1] if len(sys.argv) > 1 else "models/archive/v9/detector_v9_holdout2.joblib")

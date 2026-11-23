@@ -42,7 +42,7 @@ v10 (results/final_v10/PREREGISTRATION.md, Amendment 1): `--v10` = v9 data + hal
 test used, now dev): its normal WordPress requests and capped payload attacks. Half 1 is the dev check
 (eval/v10_payload_dev.py).
 
-    python -m ml.train_detector --v10 --out models/detector_v10.joblib
+    python -m ml.train_detector --v10 --out models/archive/v10/detector.joblib
 
 v11 (results/final_v11/PREREGISTRATION.md): `--v11 train` = v10 data + Biblio-US17 Jan-Apr (dev check on May);
 `--v11 train,holdout` = the final v11 model (Jan-May). The sealed June-July part is never read here.
