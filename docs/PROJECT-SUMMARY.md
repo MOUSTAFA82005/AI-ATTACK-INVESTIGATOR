@@ -58,7 +58,7 @@ v12 keeps the v11 models and adds three code fixes; its regression run on every 
 
 | Test | Rules only | TALON |
 |---|---|---|
-| Lab, 7 vulnerable apps attacked with real tools (sqlmap, nikto, gobuster, feroxbuster, wfuzz, hydra, medusa, dalfox) | 0.598 to 0.994 | **0.988 to 1.000** |
+| Lab, 7 vulnerable apps, attacks from our traffic generator (SQLi, XSS, traversal, command injection, brute force, scans and more) | 0.598 to 0.994 | **0.988 to 1.000** |
 | REST API (VAmPI) | 0.598 | **0.988** |
 | GraphQL API (DVGA) | 0.692 | **0.995** |
 | University library (Biblio-US17), attack families, site never seen in training (v10 detector) | 0.077 | **0.744** |
