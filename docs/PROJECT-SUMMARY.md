@@ -114,12 +114,12 @@ v12 is the last version: its preregistration says "No v13".
 |---|---|
 | Why only 31% of real attackers? | See the table above: 70% of attackers with 10+ requests; the misses are one-line probes without payload; rules got the same 31% with 38 false alarms. |
 | Is 99.87% on Biblio-US17 an unseen-site result? | No. v11 was trained on Jan-May of the same site. The unseen-site number is v10's **74.4%**. |
-| Do rules ever beat the model? | Yes, on USask false alarms (0.15% vs 0.68%, many users behind shared IPs) and on WebGoat enumeration (0.98 vs 0.69). Both are in the README limitations. |
+| Do rules ever beat the model? | Yes, on USask false alarms (0.15% vs 0.68%, many users behind shared IPs) and on WebGoat enumeration (0.98 vs 0.69). Both are next steps in the README (Future work). |
 | Can it run on a site it never saw? | Yes: ClarkNet, Biblio-US17 (v10) and WebGoat were never in training. |
 | Is the next-step model accurate? | Lab only; no public data has labelled multi-step real attacks, so it cannot be measured on real traffic. |
 | Did you tune on the test data? | No. Each sealed set was hashed before work started, opened once after the freeze, and never reused. |
 
-Full limitations list: `README.md` → Limitations.
+Next steps: `README.md` → Future work.
 
 ---
 

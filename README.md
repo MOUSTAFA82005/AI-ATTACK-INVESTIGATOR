@@ -25,7 +25,7 @@ It is built to work on **any** access log, not just the sites it was trained on.
 2. [Quick start (Windows)](#quick-start-windows)
 3. [The dashboard and accounts](#the-dashboard-and-accounts)
 4. [Results](#results)
-5. [Limitations](#limitations)
+5. [Future work](#future-work)
 6. [Reproducibility](#reproducibility)
 7. [Repository layout](#repository-layout)
 8. [Tests](#tests)
@@ -280,16 +280,16 @@ See [`results/final_v8/run7/RUN7-RESULTS.md`](results/final_v8/run7/RUN7-RESULTS
 
 ---
 
-## Limitations
+## Future work
 
-We report these plainly. They are also listed in the report.
+Next steps, each starting from what the tests showed and what is already in place. The report (Section 9) has the details.
 
-- **Enumeration (IDOR) on WebGoat is mostly missed.** v8 scored 0.69 against 0.98 for rules. No real labelled enumeration data exists for training.
-- **Session false alarms on logs behind a reverse proxy or NAT.** Many users share one IP there. The v10 visitor split helps on development logs, but the sealed test could not confirm it. Add such addresses to **Trusted addresses** (Account page): their visitors are still scored and shown, but never blocked or rate-limited.
-- **Next-step accuracy on real attackers cannot be measured.** No public data has labelled multi-step attacks.
-- **v11 is a same-site result.** Its sealed test is later months of the training site. The evidence for unseen sites is still the v10 sealed test.
-- **v12 catches about a third of real attackers on secrepo.com (26 of 83), the same as rules.** Its gain is zero false alarms. One-request probes for random script names cannot be caught from one line.
-- **Logs without request bodies hide attacks sent in POST bodies.** Log them as in [Quick start, step 6](#6-log-request-bodies-recommended-for-your-own-server) and TALON reads them.
+- **Attackers who send a single request.** On secrepo.com v12 caught 26 of 83 real attackers, the same as the rules, with 0 false alarms instead of 38; of attackers with 10 or more requests it caught 70%. Most misses sent one request for a random script name. Next: IP reputation and linking an address across days.
+- **Busy sites behind a reverse proxy or NAT.** The v10 visitor split (address + browser) and **Trusted addresses** (Account page) are in place: trusted visitors are still scored and shown, but never blocked or rate-limited. Next: a sealed test on logs that include browser names.
+- **Enumeration (IDOR) and XSS scanners.** Next: real labelled enumeration data (WebGoat: 0.69 vs 0.98 for rules) and a learned parameter-probing behaviour.
+- **Next step on real attackers.** Measured in the lab; next: labelled real multi-step attacks.
+- **A live ModSecurity CRS comparison** on the same sealed logs. v11 is a same-site result; the unseen-site evidence is the v10 sealed test.
+- **Request bodies.** TALON reads them when the log has them ([Quick start, step 6](#6-log-request-bodies-recommended-for-your-own-server)).
 
 ---
 
