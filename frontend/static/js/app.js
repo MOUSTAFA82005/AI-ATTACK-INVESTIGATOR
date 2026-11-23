@@ -422,6 +422,7 @@
         kpi("Attack requests", num(attacks), `${num(payload)} by payload, ${num(attacks - payload)} by behaviour`, "threat"),
         kpi("Suggested blocks", num(blocked), `${num(sessions.filter((s) => s.action === "rate_limit").length)} rate limits`),
         kpi("Mode", nice(data.mode || "sensitive"), `threshold ${data.threshold ?? "–"}${data.seconds ? `, ${data.seconds} s` : ""}`)),
+      ...campaignPanels(data.campaigns),
       el("div", { class: "grid grid-2e" },
         panel("Attack types", "attack requests in this log", typeBars(Object.fromEntries(Object.entries(types).sort((a, b) => b[1] - a[1])))),
         panel("How far attackers got", "visitors that reached each stage", stageBars(stages))),
@@ -434,6 +435,33 @@
               el("td", { class: "ipcell" }, v.ip),
               el("td", {}, el("span", { class: `badge lv-${v.risk_level}` }, `${nice(v.risk_level)} ${v.risk_score}`)),
               el("td", {}, el("span", { class: `badge act-${v.action || "allow"}` }, nice(v.action || "allow")))))))) : el("p", { class: "muted" }, "No flagged visitors."))));
+  }
+
+  // Distributed campaigns (backend/app/campaigns.py): many addresses, same browser name, only probe requests.
+  // Shown for the admin; the per-visitor verdicts are not changed by them.
+  function campaignPanels(list) {
+    return (list || []).map((c) => {
+      const rules = c.addresses.map((ip) => `deny ${ip};`).join("\n");
+      const copy = el("button", { class: "btn btn-ghost btn-small", type: "button" }, "Copy block rules");
+      copy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(rules); copy.textContent = "Copied"; } catch { copy.textContent = "Copy failed"; }
+        setTimeout(() => { copy.textContent = "Copy block rules"; }, 2000);
+      });
+      const open = el("details", { class: "campaign-ips" }, el("summary", {}, `Show the ${num(c.addresses.length)} addresses`),
+        el("pre", { class: "rules" }, c.addresses.join("\n")));
+      return el("section", { class: "panel campaign" },
+        el("div", { class: "panel-head" }, el("h2", {}, "Possible distributed campaign"), copy),
+        el("p", { class: "campaign-lead" },
+          el("strong", {}, `${num(c.addresses.length)} addresses`), " sent only probe requests with the same browser name. ",
+          "Each one alone looks like a mistyped link; together they are one tool."),
+        el("dl", { class: "facts" },
+          el("dt", {}, "Browser name"), el("dd", { class: "mono small" }, c.user_agent),
+          el("dt", {}, "Requests"), el("dd", {}, `${num(c.requests)} from ${num(c.visitors)} visitors`),
+          el("dt", {}, "Answers"), el("dd", {}, Object.entries(c.statuses || {}).map(([k, v]) => `${k} × ${num(v)}`).join(", ")),
+          el("dt", {}, "Examples"), el("dd", { class: "mono small" }, (c.examples || []).join("  "))),
+        open,
+        el("p", { class: "note" }, "Shown for review. Each visitor's risk and action in this log are not changed by this card."));
+    });
   }
 
   function visitorsPanel(sessions) {
@@ -457,7 +485,8 @@
         const what = [...new Set([...(s.attack_types || []), ...(s.behaviours || [])])];
         const tr = el("tr", { class: `s link${open ? " open" : ""}`, tabindex: 0, "aria-expanded": String(open) },
           el("td", {}, el("span", { class: `badge lv-${s.risk_level}` }, `${nice(s.risk_level)} ${s.risk_score}`)),
-          el("td", { class: "ipcell" }, s.ip, s.trusted ? el("div", { class: "small", style: "color:var(--clean);margin-top:2px", title: "On your trusted list: shown, never blocked" }, "Trusted") : null),
+          el("td", { class: "ipcell" }, s.ip, s.trusted ? el("div", { class: "small", style: "color:var(--clean);margin-top:2px", title: "On your trusted list: shown, never blocked" }, "Trusted") : null,
+            s.campaign ? el("div", { class: "small", style: "color:var(--threat);margin-top:2px", title: "Part of a possible distributed campaign (see Summary)" }, `Campaign ${s.campaign}`) : null),
           el("td", { class: "what" }, what.length ? what.map((w) => el("span", { class: "chip" }, nice(w))) : el("span", { class: "muted small" }, "Normal browsing")),
           el("td", { class: "num" }, num(s.requests)),
           el("td", { class: "hide-sm" }, s.stage ? nice(s.stage) : "–"),
@@ -493,7 +522,7 @@
     return [...new Set(sessions.flatMap((s) => s.waf_rules || []))];
   }
   function haystack(s) {
-    return [s.ip, s.risk_level, s.stage, s.action, ...(s.behaviours || []), ...(s.attack_types || [])]
+    return [s.ip, s.risk_level, s.stage, s.action, s.campaign ? "campaign" : "", ...(s.behaviours || []), ...(s.attack_types || [])]
       .concat((s.attack_types || []).map(nice)).map((x) => String(x || "").toLowerCase()).join(" ");
   }
   function levelText(sessions) {

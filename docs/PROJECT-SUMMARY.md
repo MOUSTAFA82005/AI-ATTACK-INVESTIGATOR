@@ -33,7 +33,7 @@ access log ─► parser ─► detector ─► sessions ─► attack type ─�
 | Unusual requests | Isolation Forest (review mark only, never changes a verdict) |
 
 The dashboard (FastAPI + plain HTML/JS) has accounts with e-mail login codes, saved investigations, notifications,
-trusted addresses, and masks passwords and tokens in results. Everything runs on one machine, offline.
+trusted addresses, detection of distributed campaigns (many addresses, one tool), and masks passwords and tokens in results. Everything runs on one machine, offline.
 
 ---
 
@@ -126,4 +126,4 @@ from the `v12.0-final-test` release, then:
 
 Open http://127.0.0.1:8000, log in, **New investigation**, upload a log.
 
-Tests: `python -m pytest -q` → 320 passed.
+Tests: `python -m pytest -q` → 327 passed.

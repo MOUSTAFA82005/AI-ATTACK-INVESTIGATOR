@@ -442,3 +442,10 @@ dl.facts dd { margin: 0; }
 .password-panel { display: flex; flex-direction: column; }
 .password-panel > .form { max-width: none; }
 .password-panel .otp-box { aspect-ratio: auto; height: 76px; }
+/* Investigation: distributed campaign card */
+.panel.campaign { border-color: rgba(255, 92, 122, .35); }
+.campaign-lead { margin: 0 0 14px; }
+.campaign .facts dd.mono { font-family: var(--mono); word-break: break-all; }
+.campaign-ips { margin-top: 12px; }
+.campaign-ips summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.campaign-ips pre { max-height: 220px; overflow: auto; margin-top: 8px; }

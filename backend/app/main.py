@@ -40,7 +40,7 @@ from ml.explain import reasons  # noqa: E402
 from ml.probes import PROBE_REASON, probe_rows  # noqa: E402
 from backend.app.privacy import mask_path, mask_secrets  # noqa: E402
 from backend.app.auth import bootstrap_from_env, get_auth, is_https, require_user  # noqa: E402
-from backend.app import accounts, history, trusted  # noqa: E402
+from backend.app import accounts, campaigns, history, trusted  # noqa: E402
 
 # The API description pages (/docs, /redoc, /openapi.json) are off: they map every endpoint
 # for a stranger. Set AAI_API_DOCS=1 on your own laptop to see them.
@@ -322,6 +322,7 @@ async def investigate(file: UploadFile = File(...), mode: str = Query("sensitive
     result = await _run(user, _investigate, raw, threshold, _filename(file.filename), mode)
     # After the analysis, so detection (and the sealed-test path, _investigate) is unchanged.
     trusted.apply_trusted(result, trusted.networks(store.trusted(user["id"])))
+    await _run(user, campaigns.find_campaigns, result, raw)   # report only: never changes a verdict
     return _finish(result, user, save, started)
 
 
