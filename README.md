@@ -13,6 +13,8 @@ You upload a web server access log. TALON then:
 
 It is built to work on **any** access log, not just the sites it was trained on. That generalization is tested on sites the models have never seen.
 
+**The whole project on one page** (what it does, how it was tested, every result, hard questions, team): [`docs/PROJECT-SUMMARY.md`](docs/PROJECT-SUMMARY.md).
+
 > **Ethics.** Attack traffic was only ever sent to our own lab: vulnerable apps in Docker, reachable on 127.0.0.1 only. Never point any script in this repository at a real or third-party site. Lab traffic uses fake accounts and cards only, and raw logs are never committed.
 
 ---
@@ -121,6 +123,21 @@ docker compose -f docker-compose.yml -f docker-compose.extra.yml up -d   # + DVW
 
 Access logs are written to `lab/logs/`, which is not committed.
 
+### 6. Log request bodies (recommended for your own server)
+
+Most access logs do not record what a form or API call sent, so attacks inside POST bodies cannot be seen. TALON reads the body whenever the log has it. On Nginx (as a reverse proxy, where it reads the body), add one field at the end of the usual combined line:
+
+```nginx
+http {
+    log_format combined_body escape=json
+        '$remote_addr - - [$time_local] "$request" $status $body_bytes_sent '
+        '"$http_referer" "$http_user_agent" "$request_body"';
+    access_log /var/log/nginx/access.log combined_body;
+}
+```
+
+This is the format of the lab (`lab/nginx/`). JSON logs work too: put the body in a `request_body` (or `body`) key. Bodies can hold passwords. TALON replaces them with `***` in its results, but the log file on the server still has them, so keep it readable by administrators only.
+
 ---
 
 ## The dashboard and accounts
@@ -134,7 +151,7 @@ The site has these pages:
 - **Recent.**
 - **Notifications.**
 - **Search:** press `/` to open it.
-- **Account.**
+- **Account:** password change, and **Trusted addresses** (your own IPs or networks, such as an office NAT or your proxy). Visitors from them are still scored and shown but never blocked or rate-limited; detection itself does not change (`backend/app/trusted.py`).
 
 A result can be saved as JSON and opened again later.
 
@@ -193,7 +210,7 @@ v12 = v11 plus three fixes found on real secrepo.com traffic (dev days Nov 2, 12
 | Normal visitors blocked | | 19 | **0** |
 | Attackers blocked or rate-limited | | 0.133 | **0.301** |
 
-The preregistered rule (caught at least v11 + 0.05, no more normal visitors blocked, normal alarms at most v11 + 0.01) was met: **BETTER**. Most of the 57 missed attackers sent one request for a random script name (`/fdgq.php`), which no list can know. Full table and post-hoc look at the misses: [`results/final_v12/sealed/SEALED-RESULTS.md`](results/final_v12/sealed/SEALED-RESULTS.md). v12 is the last version (stop rule in the preregistration).
+The preregistered rule (caught at least v11 + 0.05, no more normal visitors blocked, normal alarms at most v11 + 0.01) was met: **BETTER**. By size (post-hoc, analysis only): 38 of the 83 attackers sent a single request all day, and v12 caught 2 of them; of attackers with 10 or more requests it caught 19 of 27 (0.70). Only 1 missed attacker sent an attack payload; most sent one request for a random script name (`/fdgq.php`), which no list can know. Full table and post-hoc look at the misses: [`results/final_v12/sealed/SEALED-RESULTS.md`](results/final_v12/sealed/SEALED-RESULTS.md). v12 is the last version (stop rule in the preregistration).
 
 ### v11 (tag `v11.0-final-test`): the detector retrained with Biblio-US17
 
@@ -258,16 +275,11 @@ See [`results/final_v8/run7/RUN7-RESULTS.md`](results/final_v8/run7/RUN7-RESULTS
 We report these plainly. They are also listed in the report.
 
 - **Enumeration (IDOR) on WebGoat is mostly missed.** v8 scored 0.69 against 0.98 for rules. No real labelled enumeration data exists for training.
-- **dalfox (XSS scanner):** low recall. Most of its lines are reflection markers and parameter mining, not XSS payloads.
-- **RCE recall dropped from v8 to v9** on ModSec-WP (0.907 to 0.683). v10 adds the v8 RCE training rows back. That has not been re-measured on a sealed set.
-- **Session false alarms on logs behind a reverse proxy or NAT.** Many users share one IP there. The v10 visitor split helps on development logs, but the sealed test could not confirm it.
+- **Session false alarms on logs behind a reverse proxy or NAT.** Many users share one IP there. The v10 visitor split helps on development logs, but the sealed test could not confirm it. Add such addresses to **Trusted addresses** (Account page): their visitors are still scored and shown, but never blocked or rate-limited.
 - **Next-step accuracy on real attackers cannot be measured.** No public data has labelled multi-step attacks.
-- **Known-vulnerable-path probes** (honeypot style) are a signature problem, not a learning problem. `ml/probes.py` adds a list for them, but it was written after the v11 sealed test and has no sealed result.
-- **Biblio-US17 LVL2/3 attacks** (context-dependent requests and percent-encoding tricks) are mostly missed: about 0.08 recall for v10 and v11. They were never used in training.
 - **v11 is a same-site result.** Its sealed test is later months of the training site. The evidence for unseen sites is still the v10 sealed test.
 - **v12 catches about a third of real attackers on secrepo.com (26 of 83), the same as rules.** Its gain is zero false alarms. One-request probes for random script names cannot be caught from one line.
-- **Logs without request bodies hide attacks sent in POST bodies.**
-- **Sessions live in server memory.** Restarting the server logs everyone out.
+- **Logs without request bodies hide attacks sent in POST bodies.** Log them as in [Quick start, step 6](#6-log-request-bodies-recommended-for-your-own-server) and TALON reads them.
 
 ---
 
@@ -349,9 +361,9 @@ The account and API tests need no mail server: e-mails are captured in a list.
 
 ## Team
 
-- Mostafa Safi Mostafa Soliman
-- Mostafa El-Hassanein El-Hassanein El-Shaarawy
-- Mariam Mohamed Mansour
+- **Mostafa Safi Mostafa Soliman**: the data (datasets, conversion, labels), the models and their training, and the frontend (dashboard and landing page).
+- **Mostafa El-Hassanein El-Hassanein El-Shaarawy**: running the tests, the Docker lab and the traffic generator.
+- **Mariam Mohamed Mansour**: the backend (FastAPI server and the investigation API).
 
 Instructor: Dr. Sara El-Metwally · TA: Eng. Asmaa Nagib
 

@@ -21,3 +21,18 @@ v12 better if caught >= v11 + 0.05 (0.313 vs 0.145), normal blocked <= v11 (0 vs
   exploit-looking paths: v11 alarmed 1 of 142, v12 16 of 142 (none blocked).
 - Run: laptop, code = 1ddddea content (git HEAD c58e161 + identical uncommitted files), v11 = worktree c58e161,
   same models (results/final_v12/model_hashes.txt).
+
+## Post-hoc breakdown by attacker size (added 2026-11-23, analysis only, from labels.csv and pred_v12.csv; nothing changed)
+
+| requests sent by the attacker visitor (that day) | attackers | v12 caught | rules caught |
+|---|---|---|---|
+| 1 | 38 | 2 | 1 |
+| 2 | 5 | 0 | 0 |
+| 3-4 | 6 | 3 | 3 |
+| 5-9 | 7 | 2 | 2 |
+| 10 or more | 27 | 19 (0.70) | 20 |
+| all | 83 | 26 (0.31) | 26 (0.31) |
+
+38 of the 83 attackers sent a single request all day; v12 caught 2 of them. Of attackers with 3 or more requests v12
+caught 24 of 40 (0.60), with 10 or more 19 of 27 (0.70). Only 1 missed attacker sent an attack payload; the rest were
+one-line probes (random script names, CMS endpoints, secret files, admin guesses, POSTs to a static site).
