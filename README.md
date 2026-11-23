@@ -209,6 +209,23 @@ Security of the site itself:
 
 All tests below were **preregistered**. The test data was cut and SHA-256 hashed before any model saw it, and each sealed test was run **once**. Nothing was tuned after a sealed result. Every table also reports a **rules-only baseline**: payload rules plus rule-based sessions, as in `eval/rules.py`.
 
+### All sealed tests at a glance
+
+Each row is one sealed test, run once. The version column says which frozen version was tested; each later version kept the earlier gains in its development checks.
+
+| Sealed test | Version | Measure | Rules | TALON |
+|---|---|---|---|---|
+| University library log, site never seen | v10 | attack families caught | 7.7% | **74.4%** |
+| REST API / GraphQL API (lab) | v8 | attacks caught | 68% / 69% | **98.9% / 97.1%** |
+| Public website, 15 days of real internet traffic | v12 | real visitors falsely alarmed | 0.90% (38) | **0% (0)** |
+| Public website, same 15 days | v12 | attackers with 10+ requests caught | 74% | 70% |
+| ClarkNet, site never seen | v10 | false alarms | 1.66% | **0.46%** |
+| Indonesian logs, 3.06M normal requests | v9 | payload false alarms | 0.039% | 0.043% |
+| 7 lab sites | v8 | attacks caught | 0.68 to 0.994 | **0.970 to 0.996** |
+| WebGoat, lab site never seen | v8 | attacks caught | **98.4%** | 69.3% |
+
+Details for each version follow.
+
 ### v12 (tag `v12.0-final-test`): real internet traffic, 15 sealed days
 
 v12 = v11 plus three fixes found on real secrepo.com traffic (dev days Nov 2, 12, 17 2026): a broken link in quotes (`%22http://...%22`) is scored again without the link, an IP that changes its browser name on almost every request is one visitor, and known exploit endpoints and HEAD backup-folder guesses count as probes (also when answered 429). No model was retrained. The sealed test is 15 other days of November 2026 of the same site, hashed before anyone opened them; visitors were labelled by hand from the raw lines before any system ran.

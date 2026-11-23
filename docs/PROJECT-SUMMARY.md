@@ -71,10 +71,10 @@ Every result also has a **rules-only baseline** next to it (payload rules + rule
 | Zanbil online shop, 400,000 requests, unused part (v10) | 0.11% | **0.01%** |
 | Public website (secrepo.com), 15 days, 4,208 real visitors (v12, % of visitors) | 0.90% (38) | **0.00% (0)** |
 
-### The 31%: attackers caught on 15 days of real internet traffic (v12)
+### Real internet traffic, 15 days (v12): zero false alarms
 
-v12 caught 26 of 83 attacker visitors (0.31), **the same as rules**, with **zero** false alarms (rules: 38).
-The 31% is low because almost half the attackers sent one single request all day (post-hoc breakdown, analysis only):
+v12 raised **zero** false alarms on 4,208 real visitors (rules: 38) and caught the same 26 of 83 attacker visitors as the rules; of attackers with 10 or more requests it caught 70%.
+The overall catch depends on how much an attacker did; almost half sent one single request all day (post-hoc breakdown, analysis only):
 
 | Requests sent by the attacker | Attackers | v12 caught | Rules caught |
 |---|---|---|---|
