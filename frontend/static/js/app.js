@@ -369,6 +369,7 @@
   // called an attack, but the model was close. A review mark only; detection and verdicts are not changed.
   const REVIEW_FROM = 0.5;
   let reviewTo = 0.7;
+  let openLook = false;
   const needsLook = (r) => !r.is_attack && r.attack_prob != null && r.attack_prob >= REVIEW_FROM && r.attack_prob < reviewTo;
 
   async function renderInvestigation(key, section) {
@@ -431,6 +432,7 @@
         kpi("Suggested blocks", num(blocked), `${num(sessions.filter((s) => s.action === "rate_limit").length)} rate limits`),
         kpi("Mode", nice(data.mode || "sensitive"), `threshold ${data.threshold ?? "–"}${data.seconds ? `, ${data.seconds} s` : ""}`)),
       ...campaignPanels(data.campaigns),
+      lookPanel(timeline, key),
       el("div", { class: "grid grid-2e" },
         panel("Attack types", "attack requests in this log", typeBars(Object.fromEntries(Object.entries(types).sort((a, b) => b[1] - a[1])))),
         panel("How far attackers got", "visitors that reached each stage", stageBars(stages))),
@@ -470,6 +472,24 @@
         open,
         el("p", { class: "note" }, "Shown for review. Each visitor's risk and action in this log are not changed by this card."));
     });
+  }
+
+  // Summary card: requests the detector was close to calling attacks (see needsLook).
+  function lookPanel(timeline, key) {
+    const list = timeline.filter(needsLook).sort((a, b) => b.attack_prob - a.attack_prob);
+    if (!list.length) return null;
+    const all = el("a", { href: `#/inv/${key}/requests` }, `See all ${num(list.length)}`);
+    all.addEventListener("click", () => { openLook = true; });
+    return el("section", { class: "panel look-panel" },
+      el("div", { class: "panel-head" }, el("h2", {}, "Needs a look"), all),
+      el("p", { class: "muted", style: "margin:0 0 12px" },
+        `${num(list.length)} request${list.length === 1 ? "" : "s"} the detector was close to calling an attack (score from ${REVIEW_FROM} up to ${reviewTo}). Not counted as attacks; worth a quick check.`),
+      el("div", { class: "table-wrap" }, el("table", { class: "t" },
+        el("thead", {}, el("tr", {}, el("th", {}, "Visitor"), el("th", {}, "Request"), el("th", { class: "num" }, "Score"))),
+        el("tbody", {}, list.slice(0, 5).map((r) => el("tr", {},
+          el("td", { class: "ipcell" }, r.ip),
+          el("td", { class: "req" }, `${r.method} ${r.path}`, r.body ? el("div", { class: "muted" }, `body: ${r.body}`) : null),
+          el("td", { class: "num" }, Number(r.attack_prob).toFixed(3))))))));
   }
 
   function visitorsPanel(sessions) {
@@ -598,6 +618,8 @@
     only.checked = showIp;
     const look = el("input", { type: "checkbox" });
     const nLook = t.filter(needsLook).length;
+    if (showIp && openLook && nLook) { look.checked = true; only.checked = false; }
+    openLook = false;
     const tbody = el("tbody");
     const fill = () => tbody.replaceChildren(...t.filter((r) => look.checked ? needsLook(r) : (!only.checked || r.is_attack)).slice(0, 500).map((r) =>
       el("tr", { class: r.is_attack ? "attack" : "" },
@@ -605,7 +627,7 @@
         showIp ? el("td", { class: "ipcell" }, r.ip || "–") : null,
         el("td", { class: "req" }, `${r.method} ${r.path}`, r.body ? el("div", { class: "muted" }, `body: ${r.body}`) : null),
         el("td", {}, r.status ?? "–"),
-        el("td", { class: "num" }, r.attack_prob == null ? "–" : Number(r.attack_prob).toFixed(2)),
+        el("td", { class: "num" }, r.attack_prob == null ? "–" : Number(r.attack_prob).toFixed(needsLook(r) ? 3 : 2)),
         el("td", {}, r.attack_type ? nice(r.attack_type) : r.is_attack ? "Attack" : "–",
           r.reasons?.length ? el("div", { class: "muted small" }, r.reasons.join("; ")) : null),
         el("td", { class: "hide-sm" },
